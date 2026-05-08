@@ -16,8 +16,6 @@ import { testProviderKey } from "./test-provider.js";
 import { PROVIDERS, maskKey } from "./providers.js";
 import { C } from "./theme.js";
 import {
-  COMMON_MODELS,
-  PROVIDER_PREFIXES,
   CHAIN_PROVIDERS,
   HEADER_H,
   TABS_H,
@@ -27,6 +25,7 @@ import {
 } from "./constants.js";
 import type { Mode, Tab, TestResultsMap } from "./types.js";
 import { useRouteProbe } from "./hooks/useRouteProbe.js";
+import { useProfileWizard } from "./hooks/useProfileWizard.js";
 import { TabBar } from "./components/TabBar.js";
 import { Footer } from "./components/Footer.js";
 import { ProvidersContent } from "./components/ProvidersContent.js";
@@ -56,23 +55,9 @@ export function App() {
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
   const [testResults, setTestResults] = useState<TestResultsMap>({});
 
-  // Profile tab state
+  // Profile tab state — only the cursor is owned by App. The rest of the
+  // profile-edit wizard state lives in useProfileWizard.
   const [profileIndex, setProfileIndex] = useState(0);
-  const [editProfileName, setEditProfileName] = useState("");
-  const [editProfileValue, setEditProfileValue] = useState("");
-  const [profileScope, setProfileScope] = useState<"global" | "project">("global");
-  const [suggestions, setSuggestions] = useState<string[]>([]);
-  const [suggestionIndex, setSuggestionIndex] = useState(-1);
-  const [providerPickerIndex, setProviderPickerIndex] = useState(0);
-  const [providerPickerReturnMode, setProviderPickerReturnMode] =
-    useState<Mode>("edit_profile_opus");
-
-  // Compute autocomplete suggestions for model input
-  const computeSuggestions = useCallback((input: string): string[] => {
-    if (!input) return COMMON_MODELS.slice(0, 8);
-    const lower = input.toLowerCase();
-    return COMMON_MODELS.filter((m) => m.toLowerCase().includes(lower)).slice(0, 8);
-  }, []);
 
   const quit = useCallback(() => renderer.destroy(), [renderer]);
 
@@ -96,6 +81,21 @@ export function App() {
   // The keyboard handler delegates to verb methods (startInput, submit, etc.).
   const probe = useRouteProbe(config);
   const { probeMode, probeModel, probeResults } = probe;
+
+  // Profile editor wizard — owns editProfileName/Value, profileScope,
+  // suggestions/suggestionIndex, providerPickerIndex, and the
+  // (intentionally hook-internal) providerPickerReturnMode. The keyboard
+  // handler dispatches verb methods; the hook flips parent `mode` for its
+  // visible sub-states.
+  const wizard = useProfileWizard({ mode, setMode, refreshConfig, setStatusMsg });
+  const {
+    editProfileName,
+    editProfileValue,
+    profileScope,
+    suggestions,
+    suggestionIndex,
+    providerPickerIndex,
+  } = wizard;
 
   const hasCfgKey = !!config.apiKeys?.[selectedProvider.apiKeyEnvVar];
   const hasEnvKey = !!process.env[selectedProvider.apiKeyEnvVar];
@@ -274,229 +274,67 @@ export function App() {
       return;
     }
 
-    // Profile: scope picker (g = global, p = project)
+    // Profile wizard: scope picker (g = global, p = project)
     if (mode === "pick_profile_scope") {
       if (key.raw === "g" || key.raw === "G") {
-        setProfileScope("global");
-        setEditProfileValue("");
-        setMode("new_profile");
+        wizard.pickScope("global");
       } else if (key.raw === "p" || key.raw === "P") {
-        setProfileScope("project");
-        setEditProfileValue("");
-        setMode("new_profile");
+        wizard.pickScope("project");
       } else if (key.name === "escape") {
-        setMode("browse");
+        wizard.cancelPickScope();
       }
       return;
     }
 
-    // Profile: new profile name input
+    // Profile wizard: new profile name input
     if (mode === "new_profile") {
       if (key.name === "return" || key.name === "enter") {
-        const name = editProfileValue.trim();
-        if (!name) {
-          setMode("browse");
-          setEditProfileValue("");
-          return;
-        }
-        const now = new Date().toISOString();
-        if (profileScope === "project") {
-          // Save to local .claudish.json
-          const localCfg = loadLocalConfig() ?? {
-            version: "1.0.0",
-            defaultProfile: "",
-            profiles: {},
-          };
-          localCfg.profiles[name] = { name, models: {}, createdAt: now, updatedAt: now };
-          saveLocalConfig(localCfg);
-        } else {
-          // Save to global config
-          const cfg = loadConfig();
-          cfg.profiles[name] = { name, models: {}, createdAt: now, updatedAt: now };
-          saveConfig(cfg);
-        }
-        refreshConfig();
-        setEditProfileName(name);
-        setEditProfileValue("");
-        setSuggestions(computeSuggestions(""));
-        setSuggestionIndex(-1);
-        setMode("edit_profile_opus");
+        wizard.newProfileSubmit();
       } else if (key.name === "escape") {
-        setEditProfileValue("");
-        setMode("browse");
+        wizard.newProfileEscape();
       } else if (key.name === "backspace" || key.name === "delete") {
-        setEditProfileValue((p) => p.slice(0, -1));
+        wizard.newProfileBackspace();
       } else if (key.raw && key.raw.length === 1 && !key.ctrl && !key.meta) {
-        setEditProfileValue((p) => p + key.raw);
+        wizard.newProfileTypeChar(key.raw);
       }
       return;
     }
 
-    // Profile: provider prefix picker
+    // Profile wizard: provider prefix picker (side-trip from edit fields)
     if (mode === "pick_provider_prefix") {
       if (key.name === "up" || key.name === "k") {
-        setProviderPickerIndex((i) => Math.max(0, i - 1));
+        wizard.prefixPickerUp();
       } else if (key.name === "down" || key.name === "j") {
-        setProviderPickerIndex((i) => Math.min(PROVIDER_PREFIXES.length - 1, i + 1));
+        wizard.prefixPickerDown();
       } else if (key.name === "return" || key.name === "enter") {
-        const prefix = PROVIDER_PREFIXES[providerPickerIndex]?.prefix ?? "";
-        setEditProfileValue(prefix);
-        setSuggestions(computeSuggestions(prefix));
-        setSuggestionIndex(-1);
-        setProviderPickerIndex(0);
-        setMode(providerPickerReturnMode);
+        wizard.prefixPickerSubmit();
       } else if (key.name === "escape") {
-        setProviderPickerIndex(0);
-        setMode(providerPickerReturnMode);
+        wizard.prefixPickerCancel();
       }
       return;
     }
 
-    // Profile: edit model role fields (opus → sonnet → haiku → subagent)
+    // Profile wizard: edit model role fields (opus → sonnet → haiku → subagent)
     if (
       mode === "edit_profile_opus" ||
       mode === "edit_profile_sonnet" ||
       mode === "edit_profile_haiku" ||
       mode === "edit_profile_subagent"
     ) {
-      // Helper: save value to correct scope config
-      const saveModelField = (fieldVal: string) => {
-        const val = fieldVal.trim() === "auto" ? undefined : fieldVal.trim();
-        if (profileScope === "project") {
-          const localCfg = loadLocalConfig() ?? {
-            version: "1.0.0",
-            defaultProfile: "",
-            profiles: {},
-          };
-          const prof = localCfg.profiles[editProfileName];
-          if (prof) {
-            if (mode === "edit_profile_opus") prof.models.opus = val || undefined;
-            else if (mode === "edit_profile_sonnet") prof.models.sonnet = val || undefined;
-            else if (mode === "edit_profile_haiku") prof.models.haiku = val || undefined;
-            else if (mode === "edit_profile_subagent") prof.models.subagent = val || undefined;
-            prof.updatedAt = new Date().toISOString();
-            saveLocalConfig(localCfg);
-          }
-        } else {
-          const cfg = loadConfig();
-          const prof = cfg.profiles[editProfileName];
-          if (prof) {
-            if (mode === "edit_profile_opus") prof.models.opus = val || undefined;
-            else if (mode === "edit_profile_sonnet") prof.models.sonnet = val || undefined;
-            else if (mode === "edit_profile_haiku") prof.models.haiku = val || undefined;
-            else if (mode === "edit_profile_subagent") prof.models.subagent = val || undefined;
-            prof.updatedAt = new Date().toISOString();
-            saveConfig(cfg);
-          }
-        }
-        refreshConfig();
-      };
-
-      const getNextFieldValue = (nextMode: Mode): string => {
-        if (profileScope === "project") {
-          const localCfg = loadLocalConfig();
-          const prof = localCfg?.profiles[editProfileName];
-          if (nextMode === "edit_profile_sonnet") return prof?.models?.sonnet ?? "";
-          if (nextMode === "edit_profile_haiku") return prof?.models?.haiku ?? "";
-          if (nextMode === "edit_profile_subagent") return prof?.models?.subagent ?? "";
-        } else {
-          const cfg = loadConfig();
-          const prof = cfg.profiles[editProfileName];
-          if (nextMode === "edit_profile_sonnet") return prof?.models?.sonnet ?? "";
-          if (nextMode === "edit_profile_haiku") return prof?.models?.haiku ?? "";
-          if (nextMode === "edit_profile_subagent") return prof?.models?.subagent ?? "";
-        }
-        return "";
-      };
-
       if (key.name === "return" || key.name === "enter") {
-        // Accept highlighted suggestion or typed value
-        let val = editProfileValue;
-        if (suggestionIndex >= 0 && suggestions[suggestionIndex]) {
-          val = suggestions[suggestionIndex];
-        }
-        saveModelField(val);
-        setSuggestions([]);
-        setSuggestionIndex(-1);
-        // Advance to next field or finish
-        if (mode === "edit_profile_opus") {
-          const nextVal = getNextFieldValue("edit_profile_sonnet");
-          setEditProfileValue(nextVal);
-          setSuggestions(computeSuggestions(nextVal));
-          setSuggestionIndex(-1);
-          setMode("edit_profile_sonnet");
-        } else if (mode === "edit_profile_sonnet") {
-          const nextVal = getNextFieldValue("edit_profile_haiku");
-          setEditProfileValue(nextVal);
-          setSuggestions(computeSuggestions(nextVal));
-          setSuggestionIndex(-1);
-          setMode("edit_profile_haiku");
-        } else if (mode === "edit_profile_haiku") {
-          const nextVal = getNextFieldValue("edit_profile_subagent");
-          setEditProfileValue(nextVal);
-          setSuggestions(computeSuggestions(nextVal));
-          setSuggestionIndex(-1);
-          setMode("edit_profile_subagent");
-        } else {
-          // subagent — done
-          setEditProfileValue("");
-          setEditProfileName("");
-          setSuggestions([]);
-          setSuggestionIndex(-1);
-          setMode("browse");
-          setStatusMsg(`Profile "${editProfileName}" saved.`);
-        }
+        wizard.editFieldSubmit();
       } else if (key.name === "tab") {
-        if (editProfileValue === "") {
-          // Empty input + Tab → enter provider prefix picker
-          setProviderPickerReturnMode(mode);
-          setProviderPickerIndex(0);
-          setMode("pick_provider_prefix");
-        } else if (suggestionIndex >= 0 && suggestions[suggestionIndex]) {
-          // Tab with suggestion highlighted → autocomplete into input, keep editing
-          setEditProfileValue(suggestions[suggestionIndex]);
-          setSuggestions(computeSuggestions(suggestions[suggestionIndex]!));
-          setSuggestionIndex(-1);
-        }
+        wizard.editFieldTab();
       } else if (key.name === "up" || key.name === "k") {
-        if (suggestions.length > 0) {
-          setSuggestionIndex((i) => Math.max(0, i - 1));
-        }
+        wizard.editFieldUp();
       } else if (key.name === "down" || key.name === "j") {
-        if (suggestions.length > 0) {
-          setSuggestionIndex((i) => Math.min(suggestions.length - 1, i + 1));
-        }
+        wizard.editFieldDown();
       } else if (key.name === "escape") {
-        if (suggestionIndex >= 0) {
-          // Esc dismisses suggestion selection first
-          setSuggestionIndex(-1);
-        } else {
-          setEditProfileValue("");
-          setEditProfileName("");
-          setSuggestions([]);
-          setSuggestionIndex(-1);
-          setMode("browse");
-        }
+        wizard.editFieldEscape();
       } else if (key.name === "backspace" || key.name === "delete") {
-        setEditProfileValue((p) => {
-          const next = p.slice(0, -1);
-          setSuggestions(computeSuggestions(next));
-          setSuggestionIndex(-1);
-          return next;
-        });
+        wizard.editFieldBackspace();
       } else if (key.raw && key.raw.length === 1 && !key.ctrl && !key.meta) {
-        setEditProfileValue((p) => {
-          const next = p + key.raw;
-          // Handle 'auto' shortcut with empty input + 'a'
-          if (p === "" && key.raw === "a") {
-            setSuggestions([]);
-            setSuggestionIndex(-1);
-            return "auto";
-          }
-          setSuggestions(computeSuggestions(next));
-          setSuggestionIndex(-1);
-          return next;
-        });
+        wizard.editFieldTypeChar(key.raw);
       }
       return;
     }
@@ -612,29 +450,14 @@ export function App() {
           setStatusMsg(`Profile "${selectedName}" activated.`);
         }
       } else if (key.name === "n") {
-        // New profile — first pick scope
-        setEditProfileValue("");
-        setProfileScope("global");
-        setMode("pick_profile_scope");
-        setStatusMsg(null);
+        // New profile — first pick scope (delegates to wizard)
+        wizard.startNewProfile();
       } else if (key.name === "e") {
-        // Edit selected profile's model mappings
+        // Edit selected profile's model mappings (delegates to wizard)
         const selectedName = allNames[profileIndex];
         if (selectedName) {
-          // Determine which scope the selected profile is in
           const isLocal = localCfg ? !!localCfg.profiles[selectedName] : false;
-          const scope: "global" | "project" = isLocal ? "project" : "global";
-          setProfileScope(scope);
-          const prof = isLocal
-            ? localCfg?.profiles[selectedName]
-            : loadConfig().profiles[selectedName];
-          setEditProfileName(selectedName);
-          const opusVal = prof?.models?.opus ?? "";
-          setEditProfileValue(opusVal);
-          setSuggestions(computeSuggestions(opusVal));
-          setSuggestionIndex(-1);
-          setMode("edit_profile_opus");
-          setStatusMsg(null);
+          wizard.startEditExisting(selectedName, isLocal);
         }
       } else if (key.name === "d") {
         // Delete selected profile (can't delete active one)
