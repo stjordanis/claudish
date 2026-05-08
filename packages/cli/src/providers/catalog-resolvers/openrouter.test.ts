@@ -121,22 +121,20 @@ describe("OpenRouterCatalogResolver.resolveSync", () => {
     );
   });
 
-  // Step 5: Static fallback
-  test("unknown model with 'grok' prefix → static fallback x-ai/", () => {
-    // This model isn't in the catalog but starts with "grok"
-    const noDataResolver = createResolverWithCache([]);
-    expect(noDataResolver.resolveSync("grok-99")).toBe("x-ai/grok-99");
-  });
-
-  test("unknown model with 'deepseek' prefix → static fallback deepseek/", () => {
-    const noDataResolver = createResolverWithCache([]);
-    expect(noDataResolver.resolveSync("deepseek-future")).toBe("deepseek/deepseek-future");
-  });
-
-  // Step 6: Passthrough (null)
+  // Step 5: Passthrough (null) — cold-start handled by proxy-server + launcher warm
   test("completely unknown model → null", () => {
     const noDataResolver = createResolverWithCache([]);
     expect(noDataResolver.resolveSync("totally-unknown-model")).toBeNull();
+  });
+
+  test("unknown model with vendor-keyword prefix → null (no static fallback)", () => {
+    // Previously the static vendor map would have mapped "grok-99" → "x-ai/grok-99".
+    // After the cold-start fallback was removed, an empty catalog returns null
+    // and the launcher/proxy warm path is responsible for ensuring the catalog
+    // is populated before resolveSync is consulted.
+    const noDataResolver = createResolverWithCache([]);
+    expect(noDataResolver.resolveSync("grok-99")).toBeNull();
+    expect(noDataResolver.resolveSync("deepseek-future")).toBeNull();
   });
 });
 

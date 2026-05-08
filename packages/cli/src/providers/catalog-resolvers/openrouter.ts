@@ -1,5 +1,4 @@
 import type { ModelCatalogResolver, RefreshOutcome } from "../model-catalog-resolver.js";
-import { staticOpenRouterFallback } from "./static-fallback.js";
 import {
   readAllModelsCache,
   writeAllModelsCache,
@@ -42,8 +41,7 @@ let _warmPromise: Promise<void> | null = null;
  * 2. Match in aliases array            (e.g., "grok-4-20" alias → same model)
  * 3. Match in sources[*].externalId    (e.g., "x-ai/grok-4.20" found directly)
  * 4. Suffix match on externalIds       (backward compat: "/grok-4.20" endsWith match)
- * 5. Static fallback: OPENROUTER_VENDOR_MAP (cold-start only)
- * 6. Passthrough: return null          (caller sends userInput unchanged)
+ * 5. Passthrough: return null          (caller sends userInput unchanged)
  */
 export class OpenRouterCatalogResolver implements ModelCatalogResolver {
   readonly provider = "openrouter";
@@ -103,8 +101,8 @@ export class OpenRouterCatalogResolver implements ModelCatalogResolver {
       }
     }
 
-    // Step 5: Static fallback (cold-start only)
-    return staticOpenRouterFallback(userInput);
+    // Cold-start passthrough — the proxy-server warm + launcher warm cover this case.
+    return null;
   }
 
   async warmCache(): Promise<void> {
