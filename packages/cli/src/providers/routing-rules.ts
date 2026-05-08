@@ -241,10 +241,34 @@ function routeExplicit(modelSpec: string, model: string, provider: string): Rout
 /**
  * Path 2: a bare model name. Consult rules, build candidates, filter to those
  * with credentials, and return ok/no-route accordingly.
+ *
+ * If `defaultProvider` is set and not already present in the matched chain, it
+ * is appended as a final entry — a safety net that catches models whose chain
+ * has no credentialed providers. Deduped: if the chain already lists the
+ * default provider, no second copy is added.
  */
-function routeBare(model: string, nativeProvider: string, rules: RoutingRules): RoutePlan {
-  const matched = matchRoutingRule(model, rules);
-  if (!matched || matched.length === 0) {
+function routeBare(
+  model: string,
+  nativeProvider: string,
+  rules: RoutingRules,
+  defaultProvider?: string
+): RoutePlan {
+  const matched = matchRoutingRule(model, rules) ?? [];
+  const entries = [...matched];
+
+  if (defaultProvider && defaultProvider.length > 0) {
+    const canonicalDefault =
+      PROVIDER_SHORTCUTS[defaultProvider.toLowerCase()] ?? defaultProvider.toLowerCase();
+    const alreadyPresent = entries.some((e) => {
+      const atIdx = e.indexOf("@");
+      const providerRaw = atIdx === -1 ? e : e.slice(0, atIdx);
+      const canonical = PROVIDER_SHORTCUTS[providerRaw.toLowerCase()] ?? providerRaw.toLowerCase();
+      return canonical === canonicalDefault;
+    });
+    if (!alreadyPresent) entries.push(defaultProvider);
+  }
+
+  if (entries.length === 0) {
     return {
       kind: "no-route",
       reason: `No routing rule matched "${model}".`,
@@ -252,7 +276,7 @@ function routeBare(model: string, nativeProvider: string, rules: RoutingRules): 
     };
   }
 
-  const candidates = buildRoutingChain(matched, model);
+  const candidates = buildRoutingChain(entries, model);
   const credentialed: Route[] = [];
   const skipped: string[] = [];
 
@@ -285,15 +309,22 @@ function routeBare(model: string, nativeProvider: string, rules: RoutingRules): 
  * Two paths:
  *   1. Explicit prefix (`provider@model`): the caller named the vendor. We
  *      probe ONLY that vendor's credentials; missing credentials → no-route
- *      with a credential hint. **No silent fallback.**
- *   2. Bare name: consult routing rules (defaults + user overrides), build the
- *      candidate chain, filter to credentialed entries, return the filtered
- *      chain. Empty filtered chain → no-route with hints.
+ *      with a credential hint. **No silent fallback** — `defaultProvider` is
+ *      not consulted because the user named a specific vendor.
+ *   2. Bare name: consult routing rules (defaults + user overrides), append
+ *      `defaultProvider` as a final fallback if set and not already present,
+ *      build the candidate chain, filter to credentialed entries, return the
+ *      filtered chain. Empty filtered chain → no-route with hints.
  *
- * Rules are loaded fresh each call (via `loadRoutingRules()`) unless `rulesOverride`
- * is supplied. Tests should pass `rulesOverride` to avoid disk lookups.
+ * Rules and the default provider are loaded fresh each call (via `loadRoutingRules()`
+ * and `loadConfig()`) unless overrides are supplied. Tests should pass overrides
+ * to avoid disk lookups.
  */
-export function route(modelSpec: string, rulesOverride?: RoutingRules): RoutePlan {
+export function route(
+  modelSpec: string,
+  rulesOverride?: RoutingRules,
+  defaultProviderOverride?: string
+): RoutePlan {
   const parsed = parseModelSpec(modelSpec);
 
   if (parsed.isExplicitProvider) {
@@ -301,5 +332,15 @@ export function route(modelSpec: string, rulesOverride?: RoutingRules): RoutePla
   }
 
   const rules = rulesOverride ?? loadRoutingRules();
-  return routeBare(parsed.model, parsed.provider, rules);
+  // When tests pass an explicit `rulesOverride`, treat the rule set as the
+  // authoritative source of truth and do not read `loadConfig().defaultProvider`
+  // off disk — that would leak the host machine's config into unit tests.
+  // Production callers (via `loadRoutingRules()`) get the disk-loaded default.
+  const defaultProvider =
+    defaultProviderOverride !== undefined
+      ? defaultProviderOverride
+      : rulesOverride !== undefined
+        ? undefined
+        : loadConfig().defaultProvider;
+  return routeBare(parsed.model, parsed.provider, rules, defaultProvider);
 }

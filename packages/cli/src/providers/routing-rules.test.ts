@@ -518,6 +518,95 @@ describe("route()", () => {
 });
 
 // ---------------------------------------------------------------------------
+// defaultProvider — appended as final fallback to bare-name chains
+// ---------------------------------------------------------------------------
+
+describe("route() with defaultProvider", () => {
+  beforeEach(() => {
+    for (const key of ENV_KEYS_TO_CLEAR) {
+      savedEnv[key] = process.env[key];
+      delete process.env[key];
+    }
+  });
+
+  afterEach(() => {
+    for (const key of ENV_KEYS_TO_CLEAR) {
+      if (savedEnv[key] === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = savedEnv[key];
+      }
+    }
+  });
+
+  test("defaultProvider appended after matched chain when not already present", () => {
+    process.env.OPENAI_API_KEY = "oai-test";
+    process.env.XAI_API_KEY = "xai-test";
+    const plan = route("gpt-5", { "gpt-*": ["openai"] }, "xai");
+    expect(plan.kind).toBe("ok");
+    if (plan.kind !== "ok") return;
+    expect(plan.primary.provider).toBe("openai");
+    expect(plan.fallbacks.map((r) => r.provider)).toEqual(["xai"]);
+  });
+
+  test("defaultProvider deduped if already present in chain", () => {
+    process.env.OPENAI_API_KEY = "oai-test";
+    process.env.OPENROUTER_API_KEY = "or-test";
+    const plan = route("gpt-5", { "gpt-*": ["openai", "openrouter"] }, "openrouter");
+    expect(plan.kind).toBe("ok");
+    if (plan.kind !== "ok") return;
+    expect(plan.primary.provider).toBe("openai");
+    expect(plan.fallbacks.map((r) => r.provider)).toEqual(["openrouter"]);
+  });
+
+  test("defaultProvider rescues unmatched model with no rule", () => {
+    process.env.OPENROUTER_API_KEY = "or-test";
+    const plan = route("totally-unknown-xyz", {}, "openrouter");
+    expect(plan.kind).toBe("ok");
+    if (plan.kind !== "ok") return;
+    expect(plan.primary.provider).toBe("openrouter");
+  });
+
+  test("defaultProvider rescues when matched chain has no credentialed providers", () => {
+    process.env.XAI_API_KEY = "xai-test";
+    const plan = route("deepseek-r1", { "deepseek-*": ["deepseek"] }, "xai");
+    expect(plan.kind).toBe("ok");
+    if (plan.kind !== "ok") return;
+    expect(plan.primary.provider).toBe("xai");
+  });
+
+  test("defaultProvider undefined → identical behavior to omitted argument", () => {
+    process.env.OPENAI_API_KEY = "oai-test";
+    const planA = route("gpt-5", { "gpt-*": ["openai"] }, undefined);
+    const planB = route("gpt-5", { "gpt-*": ["openai"] });
+    expect(planA).toEqual(planB);
+  });
+
+  test("defaultProvider not consulted for explicit provider@model spec", () => {
+    process.env.OPENROUTER_API_KEY = "or-test";
+    const plan = route("openrouter@gpt-5", DEFAULT_ROUTING_RULES, "xai");
+    expect(plan.kind).toBe("ok");
+    if (plan.kind !== "ok") return;
+    expect(plan.primary.provider).toBe("openrouter");
+    expect(plan.fallbacks).toEqual([]);
+  });
+
+  test("defaultProvider shortcut (e.g. 'or') resolves to canonical for dedup", () => {
+    process.env.OPENAI_API_KEY = "oai-test";
+    process.env.OPENROUTER_API_KEY = "or-test";
+    const plan = route("gpt-5", { "gpt-*": ["openai", "openrouter"] }, "or");
+    expect(plan.kind).toBe("ok");
+    if (plan.kind !== "ok") return;
+    expect(plan.fallbacks.map((r) => r.provider)).toEqual(["openrouter"]);
+  });
+
+  test("defaultProvider with no credentials → still no-route if rest of chain also lacks creds", () => {
+    const plan = route("gpt-5", { "gpt-*": ["openai"] }, "xai");
+    expect(plan.kind).toBe("no-route");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // PROVIDER_SHORTCUTS / PROVIDER_TO_PREFIX sanity checks
 // (ensure imports are consistent — routing-rules depends on these)
 // ---------------------------------------------------------------------------

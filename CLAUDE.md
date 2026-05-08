@@ -51,33 +51,34 @@ claudish --model ollama@llama3.2:3 "task"  # 3 concurrent requests
 
 ### Default Provider Configuration (v7.0.0+)
 
-The default provider for auto-routing is configurable. Set it via:
+`defaultProvider` is a **last-resort fallback** appended to every bare-name routing chain. It is not a "front of the line" override — specific patterns (`gpt-*`, `gemini-*`, etc.) still try their normal providers first. `defaultProvider` only catches models whose explicit chain has zero credentialed providers, or models that match no rule at all.
+
+Set it via:
 
 - **Config file**: `"defaultProvider": "openrouter"` in `~/.claudish/config.json`
-- **Env var**: `CLAUDISH_DEFAULT_PROVIDER=litellm`
-- **CLI flag**: `claudish --default-provider google "task"`
+- **Env var**: `CLAUDISH_DEFAULT_PROVIDER=openrouter`
+- **CLI flag**: `claudish --default-provider openrouter "task"`
 
 **Precedence** (highest to lowest):
 1. CLI flag `--default-provider`
 2. `CLAUDISH_DEFAULT_PROVIDER` env var
 3. `defaultProvider` in config file
-4. Legacy LITELLM auto-promotion (if `LITELLM_BASE_URL` + `LITELLM_API_KEY` set without explicit `defaultProvider`)
-5. `OPENROUTER_API_KEY` present → OpenRouter
-6. Hardcoded `"openrouter"`
+4. `OPENROUTER_API_KEY` present → `"openrouter"`
+5. Hardcoded `"openrouter"`
 
 **Example config**:
 ```json
 {
-  "defaultProvider": "litellm",
+  "defaultProvider": "openrouter",
   "customEndpoints": { ... }
 }
 ```
 
-Valid values: any built-in provider name (`"openrouter"`, `"litellm"`, `"openai"`, `"anthropic"`, `"google"`) or a custom endpoint name defined in `customEndpoints`.
+Valid values: any built-in provider name (`"openrouter"`, `"openai"`, `"google"`, `"litellm"`, etc.) or a custom endpoint name defined in `customEndpoints`.
 
-**Interaction with routing rules**: When `defaultProvider` is set and no explicit `routing["*"]` catch-all exists, Claudish synthesizes `routing["*"] = [defaultProvider]` at config load time. An explicit `routing["*"]` always wins.
+**How it interacts with routing rules**: For each bare-name model, `route()` matches against the rules table, builds the candidate chain, then **appends `defaultProvider` to the end** if it isn't already in the chain (deduped against shortcuts — `or` and `openrouter` are treated as the same provider). The combined chain is then credential-filtered. Explicit `provider@model` specs are not affected — `defaultProvider` only applies to bare names.
 
-**Legacy behavior**: If `LITELLM_BASE_URL` and `LITELLM_API_KEY` are set but `defaultProvider` is absent, LiteLLM is still promoted to first in the fallback chain. Claudish emits a one-shot stderr hint suggesting you set `defaultProvider` explicitly.
+**No more LiteLLM auto-promotion** (removed in commit 5 of the model-catalog and routing redesign): Setting `LITELLM_BASE_URL` + `LITELLM_API_KEY` no longer makes LiteLLM the default. Users who want LiteLLM as the catch-all must set `defaultProvider: "litellm"` explicitly.
 
 ### Vendor Prefix Auto-Resolution (ModelCatalogResolver)
 

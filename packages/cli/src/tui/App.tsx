@@ -11,6 +11,7 @@ import {
   setApiKey,
   setEndpoint,
 } from "../profile-config.js";
+import { DEFAULT_ROUTING_RULES } from "../providers/default-routing-rules.js";
 import { route } from "../providers/routing-rules.js";
 import { clearBuffer, getBufferStats } from "../stats-buffer.js";
 import { testProviderKey } from "./test-provider.js";
@@ -1841,23 +1842,30 @@ export function App() {
         flexDirection="column"
         paddingX={1}
       >
-        {/* Default chain — bordered subsection */}
+        {/* Catch-all default — the only "global" default that actually exists.
+            Per-pattern defaults (gpt-* → codex/openai/openrouter, etc.) are
+            visible in the rule table below alongside any user overrides. */}
         <text>
           <span fg={C.blue} bold>
-            {" Default fallback chain:"}
+            {" Catch-all default:"}
           </span>
+          <span fg={C.fgMuted}>{"  (used for any model not matched by a rule)"}</span>
         </text>
         <text>
-          <span fg={C.dim}> </span>
-          <span fg={C.cyan}>{"LiteLLM"}</span>
-          <span fg={C.dim}>{" → "}</span>
-          <span fg={C.cyan}>{"Zen Go"}</span>
-          <span fg={C.dim}>{" → "}</span>
-          <span fg={C.cyan}>{"Subscription"}</span>
-          <span fg={C.dim}>{" → "}</span>
-          <span fg={C.cyan}>{"Provider Direct"}</span>
-          <span fg={C.dim}>{" → "}</span>
-          <span fg={C.cyan}>{"OpenRouter"}</span>
+          <span fg={C.dim}>{"  * "}</span>
+          <span fg={C.dim}>{"→ "}</span>
+          <span fg={C.cyan}>
+            {config.defaultProvider && config.defaultProvider.length > 0
+              ? config.defaultProvider
+              : (DEFAULT_ROUTING_RULES["*"]?.[0] ?? "openrouter")}
+          </span>
+          {config.defaultProvider && config.defaultProvider.length > 0 ? (
+            <span fg={C.fgMuted}>
+              {`  (defaultProvider — overrides built-in '${DEFAULT_ROUTING_RULES["*"]?.[0] ?? "openrouter"}')`}
+            </span>
+          ) : (
+            <span fg={C.fgMuted}>{"  (built-in)"}</span>
+          )}
         </text>
         <text>
           <span fg={C.dim}>{" ─".repeat(Math.max(1, Math.floor((width - 6) / 2)))}</span>
