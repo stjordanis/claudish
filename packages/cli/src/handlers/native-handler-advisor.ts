@@ -26,6 +26,7 @@ import { appendFileSync } from "node:fs";
 import { log } from "../logger.js";
 import { parseModelSpec } from "../providers/model-parser.js";
 import { resolveModelNameSync } from "../providers/model-catalog-resolver.js";
+import { findEntryByAlias } from "../providers/catalog-query.js";
 
 const ADVISOR_SERVER_TOOL_TYPE = "advisor_20260301";
 const ADVISOR_BETA_FLAG = "advisor-tool-2026-03-01";
@@ -520,13 +521,10 @@ async function callAnthropicCollector(
   adviceText: string,
   apiKey?: string,
 ): Promise<string> {
-  const resolvedModel = model === "haiku"
-    ? "claude-haiku-4-5-20251001"
-    : model === "sonnet"
-      ? "claude-sonnet-4-6"
-      : model === "opus"
-        ? "claude-opus-4-6"
-        : model;
+  const aliasResolved = (model === "haiku" || model === "sonnet" || model === "opus")
+    ? findEntryByAlias(model)?.modelId
+    : null;
+  const resolvedModel = aliasResolved ?? model;
 
   const resp = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",

@@ -9,8 +9,11 @@
  */
 
 import { log } from "../logger.js";
+import { findVisionAlias } from "../providers/catalog-query.js";
 
-const VISION_MODEL = "claude-sonnet-4-20250514";
+function getVisionModel(): string {
+  return findVisionAlias("sonnet")?.modelId ?? "claude-sonnet-4-6";
+}
 const MAX_TOKENS_PER_IMAGE = 1024;
 const VISION_ENDPOINT = "https://api.anthropic.com/v1/messages";
 const TIMEOUT_MS = 30_000;
@@ -84,7 +87,7 @@ async function describeImage(
   const { mediaType, data } = parsed;
 
   const requestBody = {
-    model: VISION_MODEL,
+    model: getVisionModel(),
     max_tokens: MAX_TOKENS_PER_IMAGE,
     stream: false,
     messages: [
