@@ -175,6 +175,7 @@ async function runCli() {
   const { findAvailablePort } = await import("./port-manager.js");
   const { createProxyServer } = await import("./proxy-server.js");
   const { checkForUpdates } = await import("./update-checker.js");
+  const { warmCatalogIfNeeded } = await import("./launcher/catalog-warm.js");
 
   /**
    * Read content from stdin
@@ -444,6 +445,20 @@ async function runCli() {
         // Prepend stdin content to claudeArgs
         cliConfig.claudeArgs = [stdinInput, ...cliConfig.claudeArgs];
       }
+    }
+
+    // Launcher catalog warm step. Runs BEFORE port resolution / proxy startup
+    // so we can exit cleanly without a half-spawned server when the catalog
+    // is missing AND the network is unreachable. See architecture.md §2.4.
+    //
+    // Returns one of:
+    //   "ok"        — catalog ready (fresh or freshly refreshed)
+    //   "warned"    — proceed with stale cache, warning already on stderr
+    //   "skipped"   — local model or --skip-models-update
+    //   "hard_fail" — missing cache + network failure → exit 1
+    const warmOutcome = await warmCatalogIfNeeded(cliConfig);
+    if (warmOutcome === "hard_fail") {
+      process.exit(1);
     }
 
     // Find available port
