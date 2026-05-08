@@ -11,7 +11,6 @@ import {
   setApiKey,
   setEndpoint,
 } from "../profile-config.js";
-import { route } from "../providers/routing-rules.js";
 import { clearBuffer, getBufferStats } from "../stats-buffer.js";
 import { testProviderKey } from "./test-provider.js";
 import { PROVIDERS, maskKey } from "./providers.js";
@@ -26,7 +25,8 @@ import {
   DETAIL_H,
   VERSION,
 } from "./constants.js";
-import type { Mode, ProbeEntry, ProbeMode, Tab, TestResultsMap } from "./types.js";
+import type { Mode, Tab, TestResultsMap } from "./types.js";
+import { useRouteProbe } from "./hooks/useRouteProbe.js";
 import { TabBar } from "./components/TabBar.js";
 import { Footer } from "./components/Footer.js";
 import { ProvidersContent } from "./components/ProvidersContent.js";
@@ -55,9 +55,6 @@ export function App() {
   const [chainCursor, setChainCursor] = useState(0);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
   const [testResults, setTestResults] = useState<TestResultsMap>({});
-  const [probeMode, setProbeMode] = useState<ProbeMode>("idle");
-  const [probeModel, setProbeModel] = useState("");
-  const [probeResults, setProbeResults] = useState<ProbeEntry[]>([]);
 
   // Profile tab state
   const [profileIndex, setProfileIndex] = useState(0);
@@ -95,6 +92,11 @@ export function App() {
     setBufStats(getBufferStats());
   }, []);
 
+  // Route probe wizard — owns probeMode/probeModel/probeResults internally.
+  // The keyboard handler delegates to verb methods (startInput, submit, etc.).
+  const probe = useRouteProbe(config);
+  const { probeMode, probeModel, probeResults } = probe;
+
   const hasCfgKey = !!config.apiKeys?.[selectedProvider.apiKeyEnvVar];
   const hasEnvKey = !!process.env[selectedProvider.apiKeyEnvVar];
   const hasKey = hasCfgKey || hasEnvKey;
@@ -126,101 +128,18 @@ export function App() {
   useKeyboard((key) => {
     if (key.ctrl && key.name === "c") return quit();
 
-    // Probe input mode — handled independently of main mode (non-blocking)
+    // Probe input mode — handled independently of main mode (non-blocking).
+    // Delegates to useRouteProbe verb methods. Note: probe.submit() kicks off
+    // an async test loop that does NOT abort on cancel — see the hook comment.
     if (probeMode === "input") {
       if (key.name === "return" || key.name === "enter") {
-        const model = probeModel.trim();
-        if (!model) {
-          setProbeModel("");
-          setProbeMode("idle");
-          return;
-        }
-        const plan = route(model);
-        if (plan.kind !== "ok") {
-          setProbeResults([
-            {
-              provider: "none",
-              displayName: "No routes found",
-              status: "failed",
-              error: plan.hint ?? plan.reason,
-            },
-          ]);
-          setProbeMode("done");
-          return;
-        }
-        const chain = [plan.primary, ...plan.fallbacks];
-        // Check which routing rule matched
-        const ruleEntries = Object.entries(config.routing ?? {});
-        const matchedRule = ruleEntries.find(([pat]) => {
-          if (pat === model) return true;
-          if (pat.includes("*")) {
-            const regex = new RegExp("^" + pat.replace(/\*/g, ".*") + "$");
-            return regex.test(model);
-          }
-          return false;
-        });
-
-        const initial: ProbeEntry[] = chain.map((r) => {
-          return {
-            provider: r.provider,
-            displayName: r.displayName,
-            status: "pending",
-            hasKey: true,
-            reason: matchedRule ? `Custom rule: ${matchedRule[0]}` : "Default fallback chain",
-          };
-        });
-        setProbeResults(initial);
-        setProbeMode("running");
-
-        // Run tests sequentially — skip providers without keys
-        (async () => {
-          for (let i = 0; i < chain.length; i++) {
-            const entry = initial[i]!;
-            if (!entry.hasKey) {
-              // No key — mark as no_key (already set), continue to next
-              continue;
-            }
-            // Mark current as testing
-            setProbeResults((prev) =>
-              prev.map((e, idx) => (idx === i ? { ...e, status: "testing" } : e))
-            );
-            const startMs = Date.now();
-            const provDef = PROVIDERS.find((p) => p.name === chain[i]!.provider);
-            const apiKey =
-              (provDef
-                ? config.apiKeys?.[provDef.apiKeyEnvVar] || process.env[provDef.apiKeyEnvVar]
-                : undefined) ?? "";
-            const elapsed = () => Date.now() - startMs;
-            const result = await testProviderKey(chain[i]!.provider, apiKey);
-            const ms = elapsed();
-            const ok = result === "valid";
-            setProbeResults((prev) =>
-              prev.map((e, idx) => {
-                if (idx === i)
-                  return {
-                    ...e,
-                    status: ok ? ("success" as const) : ("failed" as const),
-                    error: ok ? undefined : result,
-                    ms,
-                  };
-                // After success: remaining providers with keys become "not reached", without keys stay "no_key"
-                if (idx > i && ok && e.status !== "no_key")
-                  return { ...e, status: "skipped" as const };
-                return e;
-              })
-            );
-            if (ok) break;
-          }
-          setProbeMode("done");
-        })();
-        return;
+        probe.submit();
       } else if (key.name === "escape") {
-        setProbeModel("");
-        setProbeMode("idle");
+        probe.cancel();
       } else if (key.name === "backspace" || key.name === "delete") {
-        setProbeModel((p) => p.slice(0, -1));
+        probe.backspace();
       } else if (key.raw && key.raw.length === 1 && !key.ctrl && !key.meta) {
-        setProbeModel((p) => p + key.raw);
+        probe.typeChar(key.raw);
       }
       return;
     }
@@ -228,9 +147,7 @@ export function App() {
     // Probe running/done — handle keys before normal routing handlers
     if (probeMode === "running" && activeTab === "routing") {
       if (key.name === "escape") {
-        setProbeModel("");
-        setProbeResults([]);
-        setProbeMode("idle");
+        probe.cancel();
       }
       // Block all other keys while running
       return;
@@ -241,14 +158,10 @@ export function App() {
         return quit();
       } else if (key.name === "escape" || key.name === "p") {
         // Return to normal routing view
-        setProbeModel("");
-        setProbeResults([]);
-        setProbeMode("idle");
+        probe.cancel();
       } else if (key.name === "return" || key.name === "enter") {
         // Start a new probe
-        setProbeModel("");
-        setProbeResults([]);
-        setProbeMode("input");
+        probe.enterFromDone();
       }
       return;
     }
@@ -778,10 +691,8 @@ export function App() {
       } else if (key.name === "down" || key.name === "j") {
         setProviderIndex((i) => Math.min(Math.max(0, ruleEntries.length - 1), i + 1));
       } else if (key.name === "p") {
-        setProbeModel("");
-        setProbeResults([]);
         setStatusMsg(null);
-        setProbeMode("input");
+        probe.startInput();
       }
     } else if (activeTab === "privacy") {
       if (key.name === "t") {
