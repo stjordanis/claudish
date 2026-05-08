@@ -17,6 +17,10 @@ import {
   getGeminiTierFullName,
   CODE_ASSIST_FALLBACK_CHAIN,
 } from "./gemini-oauth.js";
+import {
+  getRecommendedModels,
+  getModelByIdFromFirebase,
+} from "../model-loader.js";
 
 // ANSI
 const R = "\x1b[0m";
@@ -178,10 +182,31 @@ async function geminiQuotaHandler(): Promise<void> {
     }
     console.log("");
 
-    // Usage examples
+    // Usage examples — sourced from Firebase recommended catalog so we don't
+    // hardcode model IDs that drift as new Gemini releases ship. Filter by
+    // provider=google (RecommendedModelEntry lacks `availableInPlans`; that
+    // field is on ModelDoc — see §6.E in architecture.md). Dedupe IDs because
+    // a single model can appear in multiple categories (vision + subscription).
+    const geminiFallback = process.env.CLAUDISH_GEMINI_HELP_FALLBACK ?? "gemini-2.5-flash";
+    let geminiExamples: string[];
+    try {
+      const recs = await getRecommendedModels();
+      const seen = new Set<string>();
+      geminiExamples = recs.models
+        .filter((e) => (e.provider ?? "").toLowerCase() === "google")
+        .filter((e) => (seen.has(e.id) ? false : (seen.add(e.id), true)))
+        .slice(0, 2)
+        .map((e) => e.id);
+      if (geminiExamples.length === 0) {
+        geminiExamples = [geminiFallback];
+      }
+    } catch {
+      geminiExamples = [geminiFallback];
+    }
     console.log(`  ${B}${CYN}Usage${R}`);
-    console.log(`    ${WHT}claudish --model gemini-3.1-pro-preview${R}`);
-    console.log(`    ${WHT}claudish --model gemini-2.5-flash${R}`);
+    for (const ex of geminiExamples) {
+      console.log(`    ${WHT}claudish --model ${ex}${R}`);
+    }
     console.log("");
 
     // Legend
@@ -222,6 +247,19 @@ async function codexQuotaHandler(): Promise<void> {
     }
   } catch { /* ignore */ }
 
+  // Resolve the probe model from Firebase so we don't hardcode a Codex model
+  // ID that drifts. quotaCommand runs before the launcher catalog warm (R7 in
+  // architecture.md §9), so use the async Firebase helper directly. On
+  // network failure, fall back to "gpt-5" — preserves today's behavior modulo
+  // the alias.
+  let probeModel = "gpt-5";
+  try {
+    const doc = await getModelByIdFromFirebase("gpt-5");
+    if (doc?.modelId) probeModel = doc.modelId;
+  } catch {
+    // Keep the hardcoded fallback above.
+  }
+
   const resp = await fetch("https://chatgpt.com/backend-api/codex/responses", {
     method: "POST",
     headers: {
@@ -233,7 +271,7 @@ async function codexQuotaHandler(): Promise<void> {
       "OpenAI-Beta": "responses",
     },
     body: JSON.stringify({
-      model: "gpt-5.4",
+      model: probeModel,
       instructions: "Reply with just: ok",
       input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "hi" }] }],
       stream: true,
