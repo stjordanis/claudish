@@ -300,13 +300,19 @@ export function RoutingContent({
             ? config.defaultProvider
             : (DEFAULT_ROUTING_RULES["*"]?.[0] ?? "openrouter")}
         </span>
-        {config.defaultProvider && config.defaultProvider.length > 0 ? (
-          <span fg={C.fgMuted}>
-            {`  (defaultProvider — overrides built-in '${DEFAULT_ROUTING_RULES["*"]?.[0] ?? "openrouter"}')`}
-          </span>
-        ) : (
-          <span fg={C.fgMuted}>{"  (built-in)"}</span>
-        )}
+        {(() => {
+          const builtIn = DEFAULT_ROUTING_RULES["*"]?.[0] ?? "openrouter";
+          const override = config.defaultProvider;
+          const hasOverride = !!(override && override.length > 0);
+          const overridesBuiltIn = hasOverride && override !== builtIn;
+          return overridesBuiltIn ? (
+            <span fg={C.fgMuted}>
+              {`  (defaultProvider — overrides built-in '${builtIn}')`}
+            </span>
+          ) : (
+            <span fg={C.fgMuted}>{"  (built-in)"}</span>
+          );
+        })()}
       </text>
       <text>
         <span fg={C.dim}>{" ─".repeat(Math.max(1, Math.floor((width - 6) / 2)))}</span>
