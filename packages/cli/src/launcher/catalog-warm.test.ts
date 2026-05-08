@@ -24,6 +24,7 @@ import type { RefreshOutcome } from "../providers/model-catalog-resolver.js";
 
 let mockReadResult: DiskCacheV2 | null = null;
 let mockRefreshOutcome: RefreshOutcome = { kind: "refreshed", modelCount: 0 };
+let mockResolverNull = false;
 const refreshSpy = mock(async (_timeoutMs: number): Promise<RefreshOutcome> => {
   return mockRefreshOutcome;
 });
@@ -40,6 +41,10 @@ mock.module("../providers/all-models-cache.js", () => ({
 
 mock.module("../providers/model-catalog-resolver.js", () => ({
   getResolver: (provider: string) => {
+    // `mockResolverNull` lets the L1 test exercise the otherwise-unreachable
+    // defensive branch in catalog-warm.ts where the OpenRouter resolver is
+    // somehow not registered. Reset to false in beforeEach.
+    if (mockResolverNull) return null;
     if (provider !== "openrouter") return null;
     return {
       provider: "openrouter",
@@ -238,6 +243,7 @@ describe("warmCatalogIfNeeded", () => {
     refreshSpy.mockClear();
     mockReadResult = null;
     mockRefreshOutcome = { kind: "refreshed", modelCount: 0 };
+    mockResolverNull = false;
   });
 
   afterEach(() => {
@@ -328,5 +334,42 @@ describe("warmCatalogIfNeeded", () => {
     expect(stderrText).toContain(
       "Claudish will not launch without catalog data when using cloud models."
     );
+  });
+
+  test("missing cache + null resolver → 'hard_fail' (defensive branch)", async () => {
+    // Simulate the otherwise-unreachable case where getResolver returns null
+    // (the OpenRouter resolver is normally auto-registered at module import).
+    // Combined with a missing cache, the dispatcher should still hard-fail
+    // with the verbatim FR-4 message rather than crash.
+    mockReadResult = null;
+    mockResolverNull = true;
+    const config = makeConfig({ model: "gpt-4o" });
+    const result = await warmCatalogIfNeeded(config, { now: NOW });
+    expect(result).toBe("hard_fail");
+    expect(refreshSpy).not.toHaveBeenCalled();
+    const stderrText = stderrChunks.join("");
+    expect(stderrText).toContain(
+      "Error: cannot reach model catalog and no cached copy found."
+    );
+  });
+
+  test("stale cache aged exactly 24h + fetch_failed → WARNING uses singular '1 day'", async () => {
+    // Verifies humanizeAge pluralization (L2): a cache aged exactly 24h
+    // should render as "1 day", not "1 days". The cache is stale at the
+    // 24h boundary because classifyCatalogState uses strict-less-than.
+    const oneDayAgo = new Date(NOW.getTime() - 24 * 3_600_000).toISOString();
+    mockReadResult = {
+      version: 2,
+      lastUpdated: oneDayAgo,
+      entries: [{ modelId: "alpha", aliases: [], sources: {} }],
+      models: [{ id: "vendor/alpha" }],
+    };
+    mockRefreshOutcome = { kind: "fetch_failed", reason: "network" };
+    const config = makeConfig({ model: "gpt-4o", quiet: false });
+    const result = await warmCatalogIfNeeded(config, { now: NOW });
+    expect(result).toBe("warned");
+    const stderrText = stderrChunks.join("");
+    expect(stderrText).toContain("1 day");
+    expect(stderrText).not.toContain("1 days");
   });
 });

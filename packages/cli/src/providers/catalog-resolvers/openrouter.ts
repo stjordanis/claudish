@@ -248,35 +248,16 @@ export class OpenRouterCatalogResolver implements ModelCatalogResolver {
     return null;
   }
 
+  /**
+   * Legacy fire-and-forget fetch entry point used by `warmCache`/`ensureReady`.
+   *
+   * Now a thin wrapper over `refreshCatalog(8000)` so the wire-format and
+   * disk-write logic lives in exactly one place. The outcome is intentionally
+   * discarded — these callers don't make policy decisions, they just want the
+   * cache populated when possible. Failures fall through to the disk-read
+   * fallback in `resolveSync`, matching the original silent-failure semantics.
+   */
   private async _fetchAndCache(): Promise<void> {
-    try {
-      const response = await fetch(FIREBASE_CATALOG_URL, {
-        signal: AbortSignal.timeout(8000),
-      });
-      if (!response.ok) {
-        throw new Error(`Firebase catalog returned ${response.status}`);
-      }
-
-      const data = (await response.json()) as { models: SlimModelEntry[]; total: number };
-      if (!Array.isArray(data.models) || data.models.length === 0) return;
-
-      _memCache = data.models;
-
-      // Write to disk cache (version 2 format + backward-compatible models array)
-      const backwardCompatModels: Array<{ id: string }> = [];
-      for (const entry of data.models) {
-        const orSource = entry.sources["openrouter-api"];
-        if (orSource?.externalId) {
-          backwardCompatModels.push({ id: orSource.externalId });
-        }
-      }
-
-      writeAllModelsCache({
-        entries: data.models,
-        models: backwardCompatModels,
-      });
-    } catch {
-      // Silent — fall back to disk read in resolveSync
-    }
+    await this.refreshCatalog(8000);
   }
 }

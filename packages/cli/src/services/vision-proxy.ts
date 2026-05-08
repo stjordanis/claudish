@@ -11,6 +11,7 @@
 import { log } from "../logger.js";
 import { findVisionAlias } from "../providers/catalog-query.js";
 
+/** Lazy on every call — `findVisionAlias` is memoized at the catalog-query layer. */
 function getVisionModel(): string {
   return findVisionAlias("sonnet")?.modelId ?? "claude-sonnet-4-6";
 }

@@ -136,16 +136,20 @@ export function classifyCatalogState(
  *
  * F11 mitigation: the minute-bucket uses `Math.max(1, ...)` so very young
  * ages (e.g. 12s after a clock skew) never render as "0 minutes".
+ *
+ * Pluralization: when the bucket value is exactly 1 we render the singular
+ * ("1 minute" / "1 hour" / "1 day") so the WARNING line reads naturally at
+ * the boundary.
  */
 function humanizeAge(ageMs: number): string {
-  const minutes = Math.floor(ageMs / 60_000);
-  if (minutes < 60) return `${Math.max(1, minutes)} minutes`;
+  const minutes = Math.max(1, Math.floor(ageMs / 60_000));
+  if (minutes < 60) return `${minutes} ${minutes === 1 ? "minute" : "minutes"}`;
 
   const hours = Math.floor(ageMs / 3_600_000);
-  if (hours < 24) return `${hours} hours`;
+  if (hours < 24) return `${hours} ${hours === 1 ? "hour" : "hours"}`;
 
   const days = Math.floor(ageMs / 86_400_000);
-  return `${days} days`;
+  return `${days} ${days === 1 ? "day" : "days"}`;
 }
 
 /**
@@ -153,13 +157,24 @@ function humanizeAge(ageMs: number): string {
  * (R6 in architecture.md — non-TTY contexts get one initial line, no `\r`
  * frames). Update interval capped at 250ms per FR-2.
  *
+ * `quiet` short-circuits to a no-op stopper so the spinner respects the
+ * documented `--quiet` semantic (Q2 in architecture.md §10) — no stderr
+ * frames are emitted at all in quiet mode.
+ *
  * Returns a `stop()` to clear the active frame and silence further updates.
  */
 interface Spinner {
   stop(): void;
 }
 
-function startSpinner(label: string): Spinner {
+function startSpinner(label: string, quiet = false): Spinner {
+  if (quiet) {
+    // --quiet suppresses spinner frames entirely. The dispatcher already
+    // skips the "preparing..." header in quiet mode; the spinner is the
+    // last source of stderr noise during a successful refresh.
+    return { stop: () => {} };
+  }
+
   const isTty = Boolean(process.stderr.isTTY);
   if (!isTty) {
     // Non-TTY: print one line and return a no-op stopper. The caller has
@@ -261,7 +276,10 @@ export async function warmCatalogIfNeeded(
     return "warned";
   }
 
-  const spinner = startSpinner("Fetching model catalog from Firebase...");
+  const spinner = startSpinner(
+    "Fetching model catalog from Firebase...",
+    config.quiet
+  );
   let outcome: RefreshOutcome;
   try {
     outcome = await resolver.refreshCatalog(8000);
