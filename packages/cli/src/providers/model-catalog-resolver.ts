@@ -12,6 +12,24 @@
  */
 
 /**
+ * Result of an explicit `refreshCatalog()` call.
+ *
+ * Unlike `warmCache()` (which is fire-and-forget and silent on failure),
+ * `refreshCatalog()` returns ground truth so the launcher can make a policy
+ * decision (proceed / warn / hard-fail) based on whether the fetch worked.
+ *
+ *  - `refreshed` — HTTP fetch returned ≥1 entries; in-memory cache replaced.
+ *  - `fetch_failed` — Caches left untouched. `reason` distinguishes:
+ *      - `timeout` — AbortSignal fired before response arrived.
+ *      - `network` — fetch threw (DNS, connection refused, TLS, etc.).
+ *      - `http_error` — response.ok was false (non-2xx status).
+ *      - `empty` — body parsed but contained 0 entries.
+ */
+export type RefreshOutcome =
+  | { kind: "refreshed"; modelCount: number }
+  | { kind: "fetch_failed"; reason: "timeout" | "network" | "http_error" | "empty" };
+
+/**
  * Contract that every per-provider resolver implements.
  *
  * resolveSync() is called from getHandlerForRequest() which must stay synchronous.
@@ -55,6 +73,21 @@ export interface ModelCatalogResolver {
    * If warming fails or times out, resolves without error (graceful degradation).
    */
   ensureReady(timeoutMs: number): Promise<void>;
+
+  /**
+   * One-shot catalog fetch with explicit success/failure return.
+   *
+   * Differs from `warmCache()` in that the caller learns whether the fetch
+   * actually worked. Used by the launcher catalog warm step to make a policy
+   * decision (proceed / warn / hard-fail).
+   *
+   * Does NOT consult the disk cache — caller is responsible for fallback policy.
+   * Mutates the in-memory cache and disk cache atomically only on success.
+   * On failure, leaves caches untouched.
+   *
+   * Must not throw — all failures are surfaced via the returned outcome.
+   */
+  refreshCatalog(timeoutMs: number): Promise<RefreshOutcome>;
 }
 
 /**

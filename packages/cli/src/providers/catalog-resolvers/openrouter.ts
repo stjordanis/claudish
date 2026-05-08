@@ -1,4 +1,4 @@
-import type { ModelCatalogResolver } from "../model-catalog-resolver.js";
+import type { ModelCatalogResolver, RefreshOutcome } from "../model-catalog-resolver.js";
 import { staticOpenRouterFallback } from "./static-fallback.js";
 import {
   readAllModelsCache,
@@ -7,7 +7,18 @@ import {
   type DiskCacheV2,
 } from "../all-models-cache.js";
 
+/**
+ * Firebase slim catalog endpoint. Override via:
+ *   - `CLAUDISH_CATALOG_URL` (preferred, documented spelling)
+ *   - `FIREBASE_CATALOG_URL` (backwards-compat alias)
+ *
+ * Used both by the proxy bg warm and the launcher's `refreshCatalog`. Chiefly
+ * useful for integration tests that point at a local server to force fetch
+ * failures (V4/V5 in `validation-criteria.md`).
+ */
 const FIREBASE_CATALOG_URL =
+  process.env.CLAUDISH_CATALOG_URL ??
+  process.env.FIREBASE_CATALOG_URL ??
   "https://us-central1-claudish-6da10.cloudfunctions.net/queryModels?status=active&catalog=slim&limit=1000";
 
 // Re-export so existing imports of DiskCache type from this module continue to work.
@@ -120,6 +131,81 @@ export class OpenRouterCatalogResolver implements ModelCatalogResolver {
       _warmPromise,
       new Promise<void>((resolve) => setTimeout(resolve, timeoutMs)),
     ]);
+  }
+
+  /**
+   * One-shot catalog fetch with explicit success/failure return.
+   *
+   * - On success: replaces `_memCache` atomically AFTER the HTTP body parses,
+   *   writes the disk cache, sets `_warmPromise = Promise.resolve()` so the
+   *   proxy-server background warm short-circuits and doesn't double-fetch,
+   *   and returns `{ kind: "refreshed", modelCount }`.
+   * - On any failure: leaves `_memCache` and disk cache untouched, returns
+   *   `{ kind: "fetch_failed", reason }`. Never throws.
+   *
+   * The launcher (`warmCatalogIfNeeded`) calls this directly and makes a
+   * policy decision based on the outcome. `warmCache()`/`ensureReady()`
+   * keep their fire-and-forget semantics for the proxy-server bg warm.
+   */
+  async refreshCatalog(timeoutMs: number): Promise<RefreshOutcome> {
+    let response: Response;
+    try {
+      response = await fetch(FIREBASE_CATALOG_URL, {
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+    } catch (err) {
+      // AbortSignal.timeout fires a DOMException (or AbortError) named "TimeoutError"
+      // when the deadline is exceeded. Anything else (DNS, ECONNREFUSED, TLS, etc.)
+      // is treated as a generic network error.
+      const name = (err as { name?: string } | null | undefined)?.name;
+      const reason: "timeout" | "network" =
+        name === "TimeoutError" || name === "AbortError" ? "timeout" : "network";
+      return { kind: "fetch_failed", reason };
+    }
+
+    if (!response.ok) {
+      return { kind: "fetch_failed", reason: "http_error" };
+    }
+
+    let data: { models: SlimModelEntry[]; total?: number };
+    try {
+      data = (await response.json()) as { models: SlimModelEntry[]; total?: number };
+    } catch {
+      // Body unparseable — treat as network-class failure (we got a response but
+      // couldn't read it). Distinct from "empty" which is a parseable but empty body.
+      return { kind: "fetch_failed", reason: "network" };
+    }
+
+    if (!Array.isArray(data.models) || data.models.length === 0) {
+      return { kind: "fetch_failed", reason: "empty" };
+    }
+
+    // Build the disk-cache backward-compat models array locally before mutating
+    // any shared state. If anything below were to throw, _memCache and the disk
+    // file are still untouched (R5 in architecture.md).
+    const backwardCompatModels: Array<{ id: string }> = [];
+    for (const entry of data.models) {
+      const orSource = entry.sources["openrouter-api"];
+      if (orSource?.externalId) {
+        backwardCompatModels.push({ id: orSource.externalId });
+      }
+    }
+
+    // Atomic swap: only after we've successfully parsed and built the new payload.
+    _memCache = data.models;
+
+    // Persist to disk for cold-start fallback paths.
+    writeAllModelsCache({
+      entries: data.models,
+      models: backwardCompatModels,
+    });
+
+    // Short-circuit the proxy-server bg warm at proxy-server.ts:535. Resolves F2.
+    // _warmPromise is read by warmCache()/ensureReady() — setting it here means
+    // those methods see "already warmed" and return immediately without re-fetching.
+    _warmPromise = Promise.resolve();
+
+    return { kind: "refreshed", modelCount: data.models.length };
   }
 
   /**
