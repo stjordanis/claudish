@@ -43,9 +43,9 @@ export const DEFAULT_ROUTING_RULES: RoutingRules = {
   // rewrite handles that.
   "kimi-*": ["kimi-coding@kimi-for-coding", "kimi", "openrouter"],
 
-  // MiniMax (both casings shipped because real model IDs use both).
+  // MiniMax (matchRoutingRule is case-insensitive, so a single rule covers
+  // both `MiniMax-M2.5` and `minimax-m2.5`).
   "minimax-*": ["minimax-coding", "minimax", "openrouter"],
-  "MiniMax-*": ["minimax-coding", "minimax", "openrouter"],
 
   // GLM: coding plan, direct, OpenRouter.
   "glm-*": ["glm-coding", "glm", "openrouter"],

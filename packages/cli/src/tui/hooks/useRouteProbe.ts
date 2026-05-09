@@ -105,12 +105,15 @@ export function useRouteProbe(config: ClaudishProfileConfig): UseRouteProbeRetur
       return;
     }
     const chain = [plan.primary, ...plan.fallbacks];
-    // Check which routing rule matched
+    // Check which routing rule matched. Case-INSENSITIVE — must mirror the
+    // matching logic in matchRoutingRule (routing-rules.ts) so the probe panel
+    // doesn't lie about which rule the engine actually picked.
     const ruleEntries = Object.entries(config.routing ?? {});
+    const modelLower = model.toLowerCase();
     const matchedRule = ruleEntries.find(([pat]) => {
-      if (pat === model) return true;
+      if (pat.toLowerCase() === modelLower) return true;
       if (pat.includes("*")) {
-        const regex = new RegExp("^" + pat.replace(/\*/g, ".*") + "$");
+        const regex = new RegExp("^" + pat.replace(/\*/g, ".*") + "$", "i");
         return regex.test(model);
       }
       return false;

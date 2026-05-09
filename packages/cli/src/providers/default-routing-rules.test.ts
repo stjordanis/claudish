@@ -77,9 +77,22 @@ describe("DEFAULT_ROUTING_RULES pattern matching", () => {
     expect(matched).toEqual(["minimax-coding", "minimax", "openrouter"]);
   });
 
-  test("'MiniMax-M2.5' matches MiniMax-* → [minimax-coding, minimax, openrouter]", () => {
+  // Case-insensitive matching: docs use mixed casing (`MiniMax-M2.5`,
+  // `GPT-4o`); the rule keys are lowercase but matchRoutingRule lowers both
+  // sides before comparing.
+  test("'MiniMax-M2.5' matches minimax-* (case-insensitive) → [minimax-coding, minimax, openrouter]", () => {
     const matched = matchRoutingRule("MiniMax-M2.5", DEFAULT_ROUTING_RULES);
     expect(matched).toEqual(["minimax-coding", "minimax", "openrouter"]);
+  });
+
+  test("'GPT-4o' matches gpt-* (case-insensitive) → [openai-codex, openai, openrouter]", () => {
+    const matched = matchRoutingRule("GPT-4o", DEFAULT_ROUTING_RULES);
+    expect(matched).toEqual(["openai-codex", "openai", "openrouter"]);
+  });
+
+  test("'Gemini-2.5-Pro' matches gemini-* (case-insensitive) → [gemini-codeassist, google, openrouter]", () => {
+    const matched = matchRoutingRule("Gemini-2.5-Pro", DEFAULT_ROUTING_RULES);
+    expect(matched).toEqual(["gemini-codeassist", "google", "openrouter"]);
   });
 
   test("'glm-4.6' matches glm-* → [glm-coding, glm, openrouter]", () => {

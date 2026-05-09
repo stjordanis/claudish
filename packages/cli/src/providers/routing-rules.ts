@@ -50,6 +50,10 @@ export function loadRoutingRules(): RoutingRules {
 
 /** Warn about config issues that would silently misbehave. */
 function validateRoutingRules(rules: RoutingRules): void {
+  // Track lower-cased keys to catch case-insensitive collisions. Matching is
+  // case-insensitive, so two keys that differ only in case will silently
+  // collapse to whichever the iteration order favors. Warn the user.
+  const seenLower = new Map<string, string>();
   for (const key of Object.keys(rules)) {
     // Multi-wildcard patterns only use the first *, rest become literals
     if (key !== "*" && (key.match(/\*/g) || []).length > 1) {
@@ -57,18 +61,39 @@ function validateRoutingRules(rules: RoutingRules): void {
         `[claudish] Warning: routing pattern "${key}" has multiple wildcards — only single * is supported. This pattern may not match as expected.`
       );
     }
+    const lower = key.toLowerCase();
+    const prior = seenLower.get(lower);
+    if (prior !== undefined && prior !== key) {
+      console.error(
+        `[claudish] Warning: routing patterns "${prior}" and "${key}" collide case-insensitively. Matching is case-insensitive, so one will silently shadow the other. Pick one casing and remove the duplicate.`
+      );
+    } else {
+      seenLower.set(lower, key);
+    }
     // Empty chain is valid — explicit no-fallback mode (route() returns
     // no-route). No warning needed; user opted in.
   }
 }
 
 /**
- * Match a model name against routing rules.
+ * Match a model name against routing rules. Case-INSENSITIVE — provider
+ * docs and catalogs use mixed casing (`MiniMax-M2.5`, `GPT-4o`) but the
+ * underlying APIs accept any case, so users get bitten when copy-paste
+ * casing doesn't exactly match a lowercase rule key.
+ *
  * Priority: exact → longest glob → "*" catch-all → null (use default chain).
+ *
+ * NOTE: only the rule LOOKUP is lowered. The original `modelName` casing is
+ * preserved when the route is built and sent to provider APIs (some are
+ * case-sensitive on their own model IDs).
  */
 export function matchRoutingRule(modelName: string, rules: RoutingRules): RoutingEntry[] | null {
-  // 1. Exact match
-  if (rules[modelName]) return rules[modelName];
+  const lowered = modelName.toLowerCase();
+
+  // 1. Exact match (case-insensitive over rule keys)
+  for (const [key, entries] of Object.entries(rules)) {
+    if (!key.includes("*") && key.toLowerCase() === lowered) return entries;
+  }
 
   // 2. Glob patterns (sorted longest-first = most specific)
   const globKeys = Object.keys(rules)
@@ -126,16 +151,21 @@ export function buildRoutingChain(entries: RoutingEntry[], originalModelName: st
   return routes;
 }
 
-/** Single-wildcard glob: "kimi-*" matches "kimi-k2.5" */
+/**
+ * Single-wildcard glob: "kimi-*" matches "kimi-k2.5". Case-INSENSITIVE so
+ * `MiniMax-M2.5` matches `minimax-*` and `GPT-4o` matches `gpt-*`. Provider
+ * docs use mixed casing, model IDs in catalogs are usually lowercase, but
+ * users routinely paste from docs and would otherwise hit the catch-all.
+ */
 function globMatch(pattern: string, value: string): boolean {
   const star = pattern.indexOf("*");
-  if (star === -1) return pattern === value;
-  const prefix = pattern.slice(0, star);
-  const suffix = pattern.slice(star + 1);
+  const p = pattern.toLowerCase();
+  const v = value.toLowerCase();
+  if (star === -1) return p === v;
+  const prefix = p.slice(0, star);
+  const suffix = p.slice(star + 1);
   return (
-    value.startsWith(prefix) &&
-    value.endsWith(suffix) &&
-    value.length >= prefix.length + suffix.length
+    v.startsWith(prefix) && v.endsWith(suffix) && v.length >= prefix.length + suffix.length
   );
 }
 
