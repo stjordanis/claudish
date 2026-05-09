@@ -55,6 +55,8 @@ interface RoutingContentProps {
    *  option as "(current)" so the user can move scopes deliberately. Null
    *  when adding a new rule or overriding a default (no current scope). */
   editingExistingScope: "global" | "project" | null;
+  /** Cursor index for the scope picker menu (0 = global, 1 = project). */
+  routingScopeCursor: 0 | 1;
 }
 
 export function RoutingContent({
@@ -73,6 +75,7 @@ export function RoutingContent({
   contentH,
   isRoutingInput,
   editingExistingScope,
+  routingScopeCursor,
 }: RoutingContentProps) {
   // Refs for the two scrolling lists. We auto-scroll the cursor into view via
   // an effect; the scrollbox itself is unfocused so it doesn't capture our
@@ -477,11 +480,10 @@ export function RoutingContent({
         </>
       )}
 
-      {/* Scope picker — opens as a full-area modal-style view that replaces
-          the rules table when active. `isRoutingInput` (App.tsx) gates the
-          rules-table render, so when the picker is up the table is hidden
-          and the picker takes the full space. Mirrors how
-          `add_routing_chain` mode renders. */}
+      {/* Scope picker — menu-style navigation matching the chain selector
+          and Providers tab. Cursor highlights the active row; ↑↓ moves it,
+          Enter selects, Esc cancels. Letter shortcuts (g/p) still work as
+          silent accelerators but the visible UI is the menu. */}
       {mode === "pick_routing_scope" && (
         <box flexDirection="column" paddingTop={1} paddingX={1} style={{ flexGrow: 1 }}>
           <text height={1}>
@@ -494,26 +496,33 @@ export function RoutingContent({
               {"  Choose where to save this rule. Project rules live in "}
             </span>
             <span fg={C.cyan}>{".claudish.json"}</span>
-            <span fg={C.fgMuted}>{" and only apply when running"}</span>
+            <span fg={C.fgMuted}>{" and only apply when"}</span>
           </text>
           <text height={1}>
-            <span fg={C.fgMuted}>{"  claudish from inside this project."}</span>
+            <span fg={C.fgMuted}>{"  running claudish from inside this project."}</span>
           </text>
           <text height={1}>{" "}</text>
-          <box height={1} flexDirection="row">
+          {/* Menu rows with cursor highlight. Same pattern as
+              add_routing_chain's CHAIN_PROVIDERS rows: backgroundColor on
+              the cursor row, bold on selected text. */}
+          <box height={1} backgroundColor={routingScopeCursor === 0 ? C.bgHighlight : C.bg}>
             <text>
-              <span fg={C.green} bold>{"  g"}</span>
-              <span fg={C.white} bold>{"  global   "}</span>
+              <span fg={routingScopeCursor === 0 ? C.green : C.fgMuted} bold>
+                {routingScopeCursor === 0 ? " ▸ " : "   "}
+              </span>
+              <span fg={C.green} bold={routingScopeCursor === 0}>{"global   "}</span>
               <span fg={C.fgMuted}>{"~/.claudish/config.json"}</span>
               {editingExistingScope === "global" && (
                 <span fg={C.dim}>{"   (current)"}</span>
               )}
             </text>
           </box>
-          <box height={1} flexDirection="row">
+          <box height={1} backgroundColor={routingScopeCursor === 1 ? C.bgHighlight : C.bg}>
             <text>
-              <span fg={C.cyan} bold>{"  p"}</span>
-              <span fg={C.cyan} bold>{"  project  "}</span>
+              <span fg={routingScopeCursor === 1 ? C.cyan : C.fgMuted} bold>
+                {routingScopeCursor === 1 ? " ▸ " : "   "}
+              </span>
+              <span fg={C.cyan} bold={routingScopeCursor === 1}>{"project  "}</span>
               <span fg={C.fgMuted}>{".claudish.json (walks up to git root)"}</span>
               {editingExistingScope === "project" && (
                 <span fg={C.dim}>{"   (current)"}</span>
@@ -523,12 +532,12 @@ export function RoutingContent({
           <text height={1}>{" "}</text>
           <text height={1}>
             <span fg={C.dim}>{"  "}</span>
-            <span fg={C.green} bold>{"g"}</span>
-            <span fg={C.dim}>{" / "}</span>
-            <span fg={C.cyan} bold>{"p"}</span>
-            <span fg={C.dim}>{" to choose · "}</span>
+            <span fg={C.blue} bold>{"↑↓"}</span>
+            <span fg={C.dim}>{" navigate · "}</span>
+            <span fg={C.green} bold>{"Enter"}</span>
+            <span fg={C.dim}>{" select · "}</span>
             <span fg={C.red} bold>{"Esc"}</span>
-            <span fg={C.dim}>{" to cancel"}</span>
+            <span fg={C.dim}>{" cancel"}</span>
           </text>
         </box>
       )}

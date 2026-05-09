@@ -80,10 +80,11 @@ export function Footer({ activeTab, mode, probeMode }: FooterProps) {
       [C.dim, "q", "quit"],
     ];
   } else if (activeTab === "routing" && mode === "pick_routing_scope") {
-    // Routing scope picker — mirrors pick_profile_scope keybindings.
+    // Routing scope picker — menu navigation. Letters g/p still work as
+    // accelerators but the visible affordance is arrows + Enter.
     keys = [
-      [C.green, "g", "global"],
-      [C.cyan, "p", "project"],
+      [C.blue, "↑↓", "navigate"],
+      [C.green, "Enter", "select"],
       [C.red, "Esc", "cancel"],
     ];
   } else if (activeTab === "routing") {

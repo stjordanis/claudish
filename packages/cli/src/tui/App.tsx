@@ -59,6 +59,9 @@ export function App() {
   // `e` (edit existing rule), so the picker is skipped and the rule's own
   // scope is used (edit-in-place semantics, matching Profiles wizard).
   const [routingScope, setRoutingScope] = useState<RoutingScope>("global");
+  // Cursor for the scope picker menu. 0 = global, 1 = project. Mirrors the
+  // chain-selector navigation pattern (↑↓ + Enter) instead of g/p shortcuts.
+  const [routingScopeCursor, setRoutingScopeCursor] = useState<0 | 1>(0);
   const [routingScopeReturnsToEdit, setRoutingScopeReturnsToEdit] = useState(false);
   // When `e` is pressed on an existing user/project rule, these track WHICH
   // rule we're editing. If the user picks a DIFFERENT scope in the picker,
@@ -269,6 +272,7 @@ export function App() {
           if (routingScopeReturnsToEdit) {
             setMode("add_routing_chain");
           } else {
+            setRoutingScopeCursor(0);
             setMode("pick_routing_scope");
           }
         }
@@ -283,10 +287,20 @@ export function App() {
       return;
     }
 
-    // Routing scope picker (g = global, p = project) — mirrors
-    // pick_profile_scope at App.tsx:311-320 (Profiles wizard pattern).
+    // Routing scope picker — menu-style navigation (↑↓ + Enter), matching the
+    // chain selector and Providers tab. Letter shortcuts (g/p) still work as
+    // silent accelerators for users who learned the prior version, but the
+    // primary interaction is the menu and the footer advertises that.
     if (mode === "pick_routing_scope") {
-      if (key.raw === "g" || key.raw === "G") {
+      if (key.name === "up" || key.name === "k") {
+        setRoutingScopeCursor((i) => (i === 0 ? 0 : 0));
+      } else if (key.name === "down" || key.name === "j") {
+        setRoutingScopeCursor((i) => (i === 0 ? 1 : 1));
+      } else if (key.name === "return" || key.name === "enter") {
+        setRoutingScope(routingScopeCursor === 0 ? "global" : "project");
+        setMode("add_routing_chain");
+      } else if (key.raw === "g" || key.raw === "G") {
+        // Silent accelerator — picks AND commits in one keystroke.
         setRoutingScope("global");
         setMode("add_routing_chain");
       } else if (key.raw === "p" || key.raw === "P") {
@@ -296,6 +310,7 @@ export function App() {
         setRoutingPattern("");
         setChainSelected(new Set());
         setChainOrder([]);
+        setRoutingScopeCursor(0);
         setRoutingScopeReturnsToEdit(false);
         setEditingExistingScope(null);
         setEditingExistingPattern(null);
@@ -662,7 +677,9 @@ export function App() {
           setStatusMsg(null);
           // Default scope to the rule's current scope (or "global" for defaults
           // — matches the typical case where users write personal overrides).
-          setRoutingScope(rule.kind === "project" ? "project" : "global");
+          const initialScope: RoutingScope = rule.kind === "project" ? "project" : "global";
+          setRoutingScope(initialScope);
+          setRoutingScopeCursor(initialScope === "global" ? 0 : 1);
           setEditingExistingScope(rule.kind === "default" ? null : rule.kind);
           setEditingExistingPattern(rule.pattern);
           setRoutingScopeReturnsToEdit(true);
@@ -861,6 +878,7 @@ export function App() {
             contentH={contentH}
             isRoutingInput={isRoutingInput}
             editingExistingScope={editingExistingScope}
+            routingScopeCursor={routingScopeCursor}
           />
           <RoutingDetail probeMode={probeMode} mergedRules={mergedRules} />
         </>
