@@ -2,6 +2,20 @@
 
 All notable changes to [Claudish](https://github.com/MadAppGang/claudish).
 
+## [7.1.1] - 2026-05-09
+
+### Documentation
+
+- update CHANGELOG.md for v7.1.0([`0bad75e`](https://github.com/MadAppGang/claudish/commit/0bad75e127c60495184ad9bedd3c993b2f5a0dad))
+
+### New Features
+
+- SEP-1686 forward-compat + diagnostics + roadmap (#119) *(channel)* ([`2312750`](https://github.com/MadAppGang/claudish/commit/2312750522bc7de7df5a6cd096515cc0b2c83a62))
+
+### Other Changes
+
+- release v7.1.1 — drop CLAUDISH_GEMINI_HELP_FALLBACK env var([`22720b9`](https://github.com/MadAppGang/claudish/commit/22720b997f7e3df01767f659df18cd64537728e5))
+
 ## [7.1.0] - 2026-05-09
 
 ### Bug Fixes
