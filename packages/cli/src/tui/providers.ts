@@ -52,12 +52,22 @@ function toProviderDef(def: ProviderDefinition): ProviderDef {
  * actually come from. Used for the AUTH column on the Providers tab and
  * for sorting "configured first".
  *
- * Priority (highest to lowest):
- *   1. "e+c"  - both env var AND config-file key present
- *   2. "env"  - env var only
- *   3. "cfg"  - config-file key only
- *   4. "oauth" - valid OAuth credentials on disk (no env/cfg key)
- *   5. null   - no credentials of any kind
+ * Priority depends on whether the provider has OAuth login support:
+ *
+ *   For OAuth-capable providers (gemini-codeassist, openai-codex,
+ *   kimi-coding): OAuth wins over env/cfg. These products are designed
+ *   around the OAuth flow as the canonical auth path; an env key is
+ *   usually a stale leftover or sideband override and shouldn't be the
+ *   advertised method in the UI.
+ *
+ *   For all other providers: env > cfg > (no OAuth path).
+ *
+ * Returns:
+ *   "oauth" - valid OAuth credentials on disk (OAuth-capable providers)
+ *   "e+c"   - both env var AND config-file key present
+ *   "env"   - env var only
+ *   "cfg"   - config-file key only
+ *   null    - no credentials of any kind
  */
 export type AuthSource = "e+c" | "env" | "cfg" | "oauth" | null;
 
@@ -65,12 +75,13 @@ export function providerAuthSource(
   p: ProviderDef,
   config: { apiKeys?: Record<string, string> },
 ): AuthSource {
+  // OAuth wins for OAuth-capable providers when credentials exist.
+  if (p.oauthSlug && hasOAuthCredentials(p.catalogName)) return "oauth";
   const hasCfg = !!p.apiKeyEnvVar && !!config.apiKeys?.[p.apiKeyEnvVar];
   const hasEnv = !!p.apiKeyEnvVar && !!process.env[p.apiKeyEnvVar];
   if (hasEnv && hasCfg) return "e+c";
   if (hasEnv) return "env";
   if (hasCfg) return "cfg";
-  if (hasOAuthCredentials(p.catalogName)) return "oauth";
   return null;
 }
 
