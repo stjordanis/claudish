@@ -565,18 +565,16 @@ export function App() {
         // Test ALL credentialed providers in parallel. Each provider's
         // testProviderKey runs concurrently; results stream into testResults
         // as they arrive (badge flips from "testing" → "valid"/"failed").
-        // Providers without a key are marked failed immediately so the user
-        // sees the full picture in one pass.
+        //
+        // Providers without a key are SKIPPED — they keep their default
+        // "not set" / "not configured" badge. Marking them as FAIL would
+        // be misleading: "no key" isn't a test failure, it's just an
+        // unused row, and lighting up 10 red FAIL badges drowns out the
+        // real test results.
         const fired: string[] = [];
         for (const prov of PROVIDERS) {
           const apiKey = config.apiKeys?.[prov.apiKeyEnvVar] || process.env[prov.apiKeyEnvVar];
-          if (!apiKey) {
-            setTestResults((prev) => ({
-              ...prev,
-              [prov.name]: { status: "failed", error: "No key configured" },
-            }));
-            continue;
-          }
+          if (!apiKey) continue;
           fired.push(prov.displayName);
           const provName = prov.name;
           setTestResults((prev) => ({ ...prev, [provName]: { status: "testing" } }));
