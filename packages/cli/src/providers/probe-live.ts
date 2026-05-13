@@ -76,6 +76,10 @@ export async function probeLink(
       },
       body: JSON.stringify({
         model: link.modelSpec,
+        // Include a system field so Codex-family providers (which require
+        // `instructions` derived from system) accept the request. Other
+        // providers tolerate the extra field.
+        system: "You are a helpful assistant.",
         messages: [{ role: "user", content: PROBE_PROMPT }],
         max_tokens: PROBE_MAX_TOKENS,
         stream: true,

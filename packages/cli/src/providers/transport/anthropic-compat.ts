@@ -49,8 +49,12 @@ export class AnthropicProviderTransport implements ProviderTransport {
       Object.assign(headers, this.provider.headers);
     }
 
-    // Kimi Coding: prefer API key auth, fall back to OAuth if no key provided
-    if (this.provider.name === "kimi-coding" && !this.apiKey) {
+    // Kimi Coding: OAuth wins over API key when both are present.
+    // Per kimi.com/code docs, the canonical auth path for the coding
+    // subscription is OAuth (claudish login kimi). A stale or wrong
+    // KIMI_CODING_API_KEY env var would otherwise produce 401 even
+    // though the user has a valid OAuth token on disk.
+    if (this.provider.name === "kimi-coding") {
       try {
         const credPath = join(homedir(), ".claudish", "kimi-oauth.json");
         if (existsSync(credPath)) {
@@ -69,7 +73,7 @@ export class AnthropicProviderTransport implements ProviderTransport {
           }
         }
       } catch (e: any) {
-        log(`[${this.displayName}] OAuth fallback failed: ${e.message}`);
+        log(`[${this.displayName}] OAuth path failed, falling back to API key: ${e.message}`);
       }
     }
 

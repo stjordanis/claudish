@@ -4,6 +4,18 @@ import { DETAIL_H } from "../constants.js";
 import type { ProviderDef } from "../providers.js";
 import type { Mode, TestResultsMap } from "../types.js";
 
+/**
+ * Collapse newlines and clip an error string to a single line that fits
+ * inside the detail box without wrapping. Used for `tr.error` which can
+ * come back from describeProbeState as a multi-line, 200-char message.
+ */
+function truncateOneLine(text: string, maxWidth: number): string {
+  const collapsed = text.replace(/\s+/g, " ").trim();
+  const limit = Math.max(20, maxWidth);
+  if (collapsed.length <= limit) return collapsed;
+  return collapsed.slice(0, limit - 1) + "…";
+}
+
 interface ProviderDetailProps {
   selectedProvider: ProviderDef;
   mode: Mode;
@@ -161,7 +173,16 @@ export function ProviderDetail({
               <span fg={C.red} bold>
                 {"✗ failed"}
               </span>
-              {tr.error && <span fg={C.red}>{`  ${tr.error}`}</span>}
+              {tr.error && (
+                <span fg={C.red}>
+                  {/* Clip the error to a single line. describeProbeState can
+                      produce 200+ char strings ("HTTP 400. Request format
+                      may be incompatible…") that wrap and overflow the
+                      fixed-height detail box, bleeding into the provider
+                      rows above. */}
+                  {`  ${truncateOneLine(tr.error, width - 16)}`}
+                </span>
+              )}
             </>
           )}
         </text>

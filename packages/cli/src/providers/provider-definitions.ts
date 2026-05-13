@@ -207,7 +207,12 @@ export const BUILTIN_PROVIDERS: ProviderDefinition[] = [
     nativeModelPatterns: [{ pattern: /codex$/i }],
     isDirectApi: true,
     description: "OpenAI Codex (cx@, codex@)",
-    testModel: "gpt-4o-mini",
+    // Codex Responses API (ChatGPT subscription backend) does NOT accept
+    // arbitrary OpenAI model names. ChatGPT-account allowlist as of
+    // 2026-05: "gpt-5.2" works; "gpt-4o-mini", "gpt-5", "gpt-5-codex",
+    // "gpt-5.2-codex" all return 400 "model not supported". Verified by
+    // direct probe.
+    testModel: "gpt-5.2",
   },
 
   // ── OpenRouter ─────────────────────────────────────────────────────
