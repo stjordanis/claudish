@@ -563,25 +563,45 @@ export function App() {
           setStatusMsg("No stored key to remove.");
         }
       } else if (key.name === "l") {
-        // OAuth login for the selected provider. Only available for
-        // providers whose catalog entry declares an oauthLoginSlug
-        // (gemini-codeassist, openai-codex, kimi-coding).
+        // OAuth login for the selected provider. Tears down the TUI so the
+        // OAuth flow's localhost callback server and inquirer prompts get
+        // a clean stdio/TTY environment, then runs loginCommand directly
+        // in the same process. After login completes (success or error),
+        // the process exits cleanly — the user re-runs `claudish config`
+        // to continue.
         //
-        // We do NOT tear down the TUI and run loginCommand inline. That
-        // approach was attempted but the OAuth flow's localhost callback
-        // server fought with OpenTUI's renderer lifecycle, leading to
-        // ERR_CONNECTION_REFUSED on the browser callback. The robust
-        // alternative is to tell the user the command and have them run
-        // it in a separate terminal (or after quitting the TUI).
+        // We do NOT try to restart the TUI in-place after login: that
+        // approach previously caused ERR_CONNECTION_REFUSED because of
+        // lifecycle conflicts between OpenTUI's renderer and the OAuth
+        // callback server. Single-process, exit-when-done is robust.
         const slug = selectedProvider.oauthSlug;
         if (!slug) {
           setStatusMsg(
             `${selectedProvider.displayName} doesn't support OAuth login. Press s to set an API key.`
           );
         } else {
-          setStatusMsg(
-            `Run in another terminal: claudish login ${slug}   (or press q to quit and run it here)`
-          );
+          // Defer the destroy so React commits the status message first.
+          setStatusMsg(`Launching: claudish login ${slug}…`);
+          setTimeout(() => {
+            renderer.destroy();
+            // Allow OpenTUI to fully release stdio before we touch it.
+            setImmediate(async () => {
+              console.log(`\nLaunching: claudish login ${slug}\n`);
+              try {
+                const mod = await import("../auth/auth-commands.js");
+                await mod.loginCommand(slug);
+                // loginCommand calls process.exit on its own paths; if it
+                // returns here, we still exit cleanly so the user gets a
+                // clean shell prompt.
+                process.exit(0);
+              } catch (err) {
+                console.error(
+                  `\n❌ OAuth login failed: ${err instanceof Error ? err.message : String(err)}\n`
+                );
+                process.exit(1);
+              }
+            });
+          }, 50);
         }
       } else if (key.raw === "T") {
         // Test ALL credentialed providers in parallel. Each provider's
