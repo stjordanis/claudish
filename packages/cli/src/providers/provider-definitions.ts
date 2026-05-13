@@ -302,7 +302,7 @@ export const BUILTIN_PROVIDERS: ProviderDefinition[] = [
     // internally. The Claude Code integration docs confirm this: users
     // set ANTHROPIC_BASE_URL and Claude Code sends its own Claude model
     // names. Sending the native model name (MiniMax-M2.5) returns 404.
-    testModel: "claude-sonnet-4-5",
+    testModel: "claude-sonnet-4-6",
   },
 
   // ── Kimi Coding Plan (must be before Kimi — kimi-for-coding$ is more specific than kimi-*)
@@ -329,7 +329,7 @@ export const BUILTIN_PROVIDERS: ProviderDefinition[] = [
     // the standard setup is ANTHROPIC_BASE_URL=https://api.kimi.com/coding/
     // with Claude Code sending its own Claude model names. Sending
     // "kimi-for-coding" in the body returns 404.
-    testModel: "claude-sonnet-4-5",
+    testModel: "claude-sonnet-4-6",
   },
 
   // ── Kimi / Moonshot (Anthropic-compatible) ─────────────────────────
