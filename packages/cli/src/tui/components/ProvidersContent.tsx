@@ -22,10 +22,13 @@ interface ProvidersContentProps {
 // Column widths — kept here so headers and rows stay in lockstep.
 const COL_NAME = 14;
 const COL_STATUS = 9;  // "ready Xms" / "testing" / "not set" / "FAIL"
-// AUTH column: combined `key`+`oauth` tag with mixed styles. Each word
-// is independently styled (set = bg pill, unset = dim, absent = blank).
-// Width = " key " (5) + " oauth " (7) = 12 chars total.
-const COL_AUTH = 12;
+// AUTH column: icon-based encoding.
+//   🔑 = key set       (2 cells)
+//   🌐 = oauth set     (2 cells)
+//   ·  = supported but not set (1 cell, padded to 2 for alignment)
+//   (blank 2 cells) = method not supported by this provider
+// Two slots side by side: [key-slot] " " [oauth-slot] → 5 cells total.
+const COL_AUTH = 5;
 const COL_KEY = 10;    // 8-char mask + a little breathing room
 
 function pad(s: string, n: number): string {
@@ -41,7 +44,9 @@ export function ProvidersContent({
   contentH,
   isInputMode,
 }: ProvidersContentProps) {
-  const listH = contentH - 2; // inner height of box
+  // contentH = total height of the rounded box.
+  //   -2 for top/bottom border, -1 for column header, -1 for legend row.
+  const listH = contentH - 4;
   let separatorRendered = false;
 
   const getRow = (p: ProviderDef, idx: number) => {
@@ -123,48 +128,28 @@ export function ProvidersContent({
               {pad(statusText, COL_STATUS)}
             </span>
             <span fg={C.dim}>{"  "}</span>
-            {/* AUTH column: combined `key` + `oauth` tag with mixed styles.
-                Each word independently reflects its state inside a single
-                visual unit:
-                  · set                → white text on bg pill (muted color)
-                  · supported but unset → dim text, no bg
-                  · not supported      → blank space (preserves alignment)
-                Width is fixed at COL_AUTH chars regardless of which cells
-                render content. */}
+            {/* AUTH column: emoji icons. Each slot is 2 terminal cells.
+                  🔑 / 🌐 = method set
+                  ·       = method supported but not set (1 cell + 1 pad)
+                  blank   = method not supported (2 cells)
+                Legend at the bottom of the panel explains the icons. */}
             {(() => {
-              // Per-word renders. Each returns its visible width so we can
-              // right-pad the column to COL_AUTH.
-              const keyWord = " key ";    // 5 chars
-              const oauthWord = " oauth "; // 7 chars
-              const keyBlank = " ".repeat(keyWord.length);
-              const oauthBlank = " ".repeat(oauthWord.length);
-
-              const keyVisible = keySlot.supported;
-              const oauthVisible = oauthSlot.supported;
-
-              const keyRendered = !keyVisible ? (
-                <span>{keyBlank}</span>
-              ) : keySlot.set ? (
-                <span fg={C.white} bg={C.pillKeyBg}>{keyWord}</span>
-              ) : (
-                <span fg={C.dim}>{keyWord}</span>
-              );
-
-              const oauthRendered = !oauthVisible ? (
-                <span>{oauthBlank}</span>
-              ) : oauthSlot.set ? (
-                <span fg={C.white} bg={C.pillOauthBg}>{oauthWord}</span>
-              ) : (
-                <span fg={C.dim}>{oauthWord}</span>
-              );
-
-              const usedWidth = keyWord.length + oauthWord.length;
-              const trailPad = " ".repeat(Math.max(0, COL_AUTH - usedWidth));
+              const keySlotGlyph = !keySlot.supported
+                ? "  "
+                : keySlot.set
+                  ? "🔑"
+                  : "· ";
+              const oauthSlotGlyph = !oauthSlot.supported
+                ? "  "
+                : oauthSlot.set
+                  ? "🌐"
+                  : "· ";
+              // Color the unset dot dim; the emoji renders with terminal color.
               return (
                 <>
-                  {keyRendered}
-                  {oauthRendered}
-                  <span>{trailPad}</span>
+                  <span fg={keySlot.set ? C.white : C.dim}>{keySlotGlyph}</span>
+                  <span>{" "}</span>
+                  <span fg={oauthSlot.set ? C.white : C.dim}>{oauthSlotGlyph}</span>
                 </>
               );
             })()}
@@ -207,6 +192,21 @@ export function ProvidersContent({
         <span fg={C.blue} bold>DESCRIPTION</span>
       </text>
       {displayProviders.slice(0, listH).map(getRow)}
+      {/* AUTH column icon legend — sits at the bottom of the panel so users
+          learn what 🔑 / 🌐 / · mean without us needing to repeat the
+          hint per row or in the description column. */}
+      <box flexDirection="row" height={1} paddingX={1}>
+        <text>
+          <span fg={C.dim}>{"AUTH:  "}</span>
+          <span>{"🔑"}</span>
+          <span fg={C.fgMuted}>{" key set  "}</span>
+          <span>{"🌐"}</span>
+          <span fg={C.fgMuted}>{" oauth set  "}</span>
+          <span fg={C.dim}>{"·"}</span>
+          <span fg={C.fgMuted}>{" supported, not set  "}</span>
+          <span fg={C.dim}>{"(blank) not available"}</span>
+        </text>
+      </box>
     </box>
   );
 }
