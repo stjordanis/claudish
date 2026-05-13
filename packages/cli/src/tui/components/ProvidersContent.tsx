@@ -22,10 +22,10 @@ interface ProvidersContentProps {
 // Column widths — kept here so headers and rows stay in lockstep.
 const COL_NAME = 14;
 const COL_STATUS = 9;  // "ready Xms" / "testing" / "not set" / "FAIL"
-// AUTH column: SINGLE slot per row showing the active method as a pill, or
-// dim text for "supported but unset". Combined "key+oauth" tag when both
-// are set. Fixed width keeps the table aligned.
-const COL_AUTH = 12;   // " key+oauth " max width
+// AUTH column: combined `key`+`oauth` tag with mixed styles. Each word
+// is independently styled (set = bg pill, unset = dim, absent = blank).
+// Width = " key " (5) + " oauth " (7) = 12 chars total.
+const COL_AUTH = 12;
 const COL_KEY = 10;    // 8-char mask + a little breathing room
 
 function pad(s: string, n: number): string {
@@ -123,55 +123,48 @@ export function ProvidersContent({
               {pad(statusText, COL_STATUS)}
             </span>
             <span fg={C.dim}>{"  "}</span>
-            {/* AUTH column: ONE slot per row.
-                Cases (most-specific first):
-                  · key + oauth both set     → pill " key+oauth " (key bg)
-                  · key set only             → pill " key " (key bg)
-                  · oauth set only           → pill " oauth " (oauth bg)
-                  · both supported, neither  → dim " key/oauth "
-                  · key supported only       → dim " key "
-                  · oauth supported only     → dim " oauth "
-                  · neither supported        → blank, same width
-                White text on muted bg for set; dim text for supported-unset. */}
+            {/* AUTH column: combined `key` + `oauth` tag with mixed styles.
+                Each word independently reflects its state inside a single
+                visual unit:
+                  · set                → white text on bg pill (muted color)
+                  · supported but unset → dim text, no bg
+                  · not supported      → blank space (preserves alignment)
+                Width is fixed at COL_AUTH chars regardless of which cells
+                render content. */}
             {(() => {
-              const ks = keySlot.set, kSup = keySlot.supported;
-              const os = oauthSlot.set, oSup = oauthSlot.supported;
-              let label: string, fg: string, bg: string | undefined;
-              if (ks && os) {
-                label = " key+oauth ";
-                fg = C.white;
-                bg = C.pillKeyBg;
-              } else if (ks) {
-                label = " key ";
-                fg = C.white;
-                bg = C.pillKeyBg;
-              } else if (os) {
-                label = " oauth ";
-                fg = C.white;
-                bg = C.pillOauthBg;
-              } else if (kSup && oSup) {
-                label = " key/oauth ";
-                fg = C.dim;
-                bg = undefined;
-              } else if (kSup) {
-                label = " key ";
-                fg = C.dim;
-                bg = undefined;
-              } else if (oSup) {
-                label = " oauth ";
-                fg = C.dim;
-                bg = undefined;
-              } else {
-                label = "";
-                fg = C.dim;
-                bg = undefined;
-              }
-              // Right-pad to COL_AUTH width so the next column aligns.
-              const padded = label + " ".repeat(Math.max(0, COL_AUTH - label.length));
+              // Per-word renders. Each returns its visible width so we can
+              // right-pad the column to COL_AUTH.
+              const keyWord = " key ";    // 5 chars
+              const oauthWord = " oauth "; // 7 chars
+              const keyBlank = " ".repeat(keyWord.length);
+              const oauthBlank = " ".repeat(oauthWord.length);
+
+              const keyVisible = keySlot.supported;
+              const oauthVisible = oauthSlot.supported;
+
+              const keyRendered = !keyVisible ? (
+                <span>{keyBlank}</span>
+              ) : keySlot.set ? (
+                <span fg={C.white} bg={C.pillKeyBg}>{keyWord}</span>
+              ) : (
+                <span fg={C.dim}>{keyWord}</span>
+              );
+
+              const oauthRendered = !oauthVisible ? (
+                <span>{oauthBlank}</span>
+              ) : oauthSlot.set ? (
+                <span fg={C.white} bg={C.pillOauthBg}>{oauthWord}</span>
+              ) : (
+                <span fg={C.dim}>{oauthWord}</span>
+              );
+
+              const usedWidth = keyWord.length + oauthWord.length;
+              const trailPad = " ".repeat(Math.max(0, COL_AUTH - usedWidth));
               return (
                 <>
-                  <span fg={fg} bg={bg}>{label}</span>
-                  <span>{padded.substring(label.length)}</span>
+                  {keyRendered}
+                  {oauthRendered}
+                  <span>{trailPad}</span>
                 </>
               );
             })()}
