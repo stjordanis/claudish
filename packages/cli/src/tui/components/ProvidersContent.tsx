@@ -175,11 +175,8 @@ export function ProvidersContent({
       flexDirection="column"
       paddingX={1}
     >
-      {/* Column header — widths match COL_* constants used by getRow.
-          AUTH column shows per-row "key ● oauth ●" capability slots.
-          Glyph legend: ● = set, ○ = supported but not set, blank = not
-          supported. */}
-      <text>
+      {/* Column header — widths match COL_* constants used by getRow. */}
+      <text height={1}>
         <span fg={C.dim}>{"   "}</span>
         <span fg={C.blue} bold>{pad("PROVIDER", COL_NAME)}</span>
         <span>{"  "}</span>
@@ -191,22 +188,25 @@ export function ProvidersContent({
         <span>{"  "}</span>
         <span fg={C.blue} bold>DESCRIPTION</span>
       </text>
-      {displayProviders.slice(0, listH).map(getRow)}
-      {/* AUTH column icon legend — sits at the bottom of the panel so users
-          learn what 🔑 / 🌐 / · mean without us needing to repeat the
-          hint per row or in the description column. */}
-      <box flexDirection="row" height={1} paddingX={1}>
-        <text>
-          <span fg={C.dim}>{"AUTH:  "}</span>
-          <span>{"🔑"}</span>
-          <span fg={C.fgMuted}>{" key set  "}</span>
-          <span>{"🌐"}</span>
-          <span fg={C.fgMuted}>{" oauth set  "}</span>
-          <span fg={C.dim}>{"·"}</span>
-          <span fg={C.fgMuted}>{" supported, not set  "}</span>
-          <span fg={C.dim}>{"(blank) not available"}</span>
-        </text>
+      {/* Rows fill the available space between header and legend. flexGrow
+          on this wrapper pushes the legend below to the panel's bottom
+          edge regardless of how many providers are shown. */}
+      <box flexDirection="column" style={{ flexGrow: 1 }}>
+        {displayProviders.slice(0, listH).map(getRow)}
       </box>
+      {/* AUTH icon legend — pinned to the bottom of the panel via the
+          flex spacer above. Explains 🔑 / 🌐 / · without repeating
+          hints per row. */}
+      <text height={1}>
+        <span fg={C.dim}>{"AUTH:  "}</span>
+        <span>{"🔑"}</span>
+        <span fg={C.fgMuted}>{" key set  "}</span>
+        <span>{"🌐"}</span>
+        <span fg={C.fgMuted}>{" oauth set  "}</span>
+        <span fg={C.dim}>{"·"}</span>
+        <span fg={C.fgMuted}>{" supported, not set  "}</span>
+        <span fg={C.dim}>{"(blank) not available"}</span>
+      </text>
     </box>
   );
 }
