@@ -22,6 +22,20 @@ interface FooterProps {
   };
 }
 
+/**
+ * Pick black or white chip text for a `#rrggbb` background by its perceptual
+ * luminance (luma weights — green dominates). Bright fills (neon green, cyan,
+ * yellow) get black text; dark fills (blue, red, gray) get white. Computed, not
+ * hardcoded per-hotkey, so it stays correct if a chip's color changes upstream.
+ */
+function chipTextColor(bgHex: string): string {
+  const r = parseInt(bgHex.slice(1, 3), 16);
+  const g = parseInt(bgHex.slice(3, 5), 16);
+  const b = parseInt(bgHex.slice(5, 7), 16);
+  const luma = 0.299 * r + 0.587 * g + 0.114 * b;
+  return luma > 150 ? C.black : C.fg;
+}
+
 export function Footer({ activeTab, mode, probeMode, providerCaps }: FooterProps) {
   // Recompute isProfileEditMode from the `mode` prop — pure on `mode`, kept
   // self-contained so the parent doesn't have to pass a derived bool.
@@ -141,11 +155,15 @@ export function Footer({ activeTab, mode, probeMode, providerCaps }: FooterProps
       <text>
         {keys.map(([color, key, label], i) => (
           <span key={i}>
-            {i > 0 && <span fg={C.dim}>{" │ "}</span>}
-            <span fg={color as string} attributes={A.bold}>
-              {key}
+            {/* Gap between chip groups — no pipe separators; spacing carries it. */}
+            {i > 0 && <span>{"  "}</span>}
+            {/* Key badge: solid color fill, auto black/white text by luminance,
+                spaces inside for pill padding. */}
+            <span fg={chipTextColor(color as string)} bg={color as string} attributes={A.bold}>
+              {` ${key} `}
             </span>
-            <span fg={C.fgMuted}> {label}</span>
+            {/* Label: muted plain text beside the badge. */}
+            <span fg={C.fgMuted}>{` ${label}`}</span>
           </span>
         ))}
       </text>

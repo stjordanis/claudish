@@ -66,10 +66,37 @@ export function ProvidersContent({
   isInputMode,
   animTick,
 }: ProvidersContentProps) {
+  // Index of the first unready (not-configured) provider — where the
+  // "─ not configured ─" divider belongs. Computed against the FULL list (not
+  // the visible window) so windowing can't move it. -1 means every provider is
+  // ready (no divider). Index-based, not a mutable "seen one yet" flag, so the
+  // divider still renders correctly even when earlier rows are scrolled off.
+  const firstUnreadyIdx = displayProviders.findIndex(
+    (p) => providerAuthSource(p, config) === null,
+  );
+
   // contentH = total height of the rounded box.
   //   -2 for top/bottom border, -1 for column header, -1 for legend row.
-  const listH = contentH - 4;
-  let separatorRendered = false;
+  // The "─ not configured ─" divider is an EXTRA physical line injected inside
+  // a row (not one of the provider slots), so when it can appear we reserve one
+  // more line. Without this, at short terminal heights the divider + its row
+  // overflow the box and OpenTUI overprints them onto a single line.
+  const hasDivider = firstUnreadyIdx >= 0;
+  const listH = contentH - 4 - (hasDivider ? 1 : 0);
+
+  // Scroll window: derive the first visible row from the cursor so the
+  // selected provider is always on-screen. Standard "scroll into view" —
+  // the viewport only shifts when the cursor crosses an edge (vim/htop feel),
+  // not a centered scroll. Purely a function of providerIndex + listH, so no
+  // parent scroll state is needed (can't drift out of sync with the cursor).
+  const scrollOffset = (() => {
+    if (listH <= 0 || displayProviders.length <= listH) return 0;
+    // Cursor above the window → snap top to cursor.
+    if (providerIndex < listH) return 0;
+    // Cursor at/below the bottom edge → put cursor on the last visible row.
+    const maxOffset = displayProviders.length - listH;
+    return Math.min(providerIndex - listH + 1, maxOffset);
+  })();
 
   const getRow = (p: ProviderDef, idx: number) => {
     const auth = providerAuthSource(p, config);
@@ -99,8 +126,7 @@ export function ProvidersContent({
       keyDisplay = "────────";
     }
 
-    const isFirstUnready = !isReady && !separatorRendered;
-    if (isFirstUnready) separatorRendered = true;
+    const isFirstUnready = idx === firstUnreadyIdx;
 
     // `tr` was already resolved above (for the key scramble); reuse it here.
     let statusFg: string = isReady ? C.green : C.dim;
@@ -258,7 +284,12 @@ export function ProvidersContent({
           on this wrapper pushes the legend below to the panel's bottom
           edge regardless of how many providers are shown. */}
       <box flexDirection="column" style={{ flexGrow: 1 }}>
-        {displayProviders.slice(0, listH).map(getRow)}
+        {/* Render only the scroll window, but pass each row its ORIGINAL index
+            (scrollOffset + i) so getRow's `idx === providerIndex` highlight
+            comparison stays correct after scrolling. */}
+        {displayProviders
+          .slice(scrollOffset, scrollOffset + listH)
+          .map((p, i) => getRow(p, scrollOffset + i))}
       </box>
       {/* AUTH icon legend — pinned to the bottom of the panel via the
           flex spacer above. Explains 🔑 / 🌐 / · without repeating
