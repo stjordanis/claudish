@@ -159,6 +159,16 @@ jobs:
           cat release-notes.md
 
       - name: Update CHANGELOG.md
+        # The changelog commit is cosmetic and MUST NOT be able to block the
+        # release/publish steps below it. The tag-push that triggers this
+        # workflow can race with other pushes to main, leaving HEAD behind
+        # origin/main and rejecting the push (non-fast-forward) — which, under
+        # `bash -e`, used to abort the whole `release` job before the GitHub
+        # Release was created, so publish-npm/update-homebrew (needs: release)
+        # never ran. We now (1) rebase onto origin/main so it lands in the
+        # normal case, and (2) make the push non-fatal so a still-racing push
+        # can never abort the job. Tag-after-main-is-settled is still the right
+        # habit, but the release no longer depends on it.
         run: |
           git cliff -o CHANGELOG.md
           if git diff --quiet CHANGELOG.md; then
@@ -168,7 +178,11 @@ jobs:
             git config user.email "github-actions[bot]@users.noreply.github.com"
             git add CHANGELOG.md
             git commit -m "docs: update CHANGELOG.md for v${GITHUB_REF#refs/tags/v}"
-            git push origin HEAD:main
+            # Reconcile with any pushes that landed on main since the tag, so
+            # the changelog commit fast-forwards in the normal case.
+            git pull --rebase origin main || echo "rebase skipped; attempting push anyway"
+            # Non-fatal: a rejected push must never abort the release.
+            git push origin HEAD:main || echo "changelog push skipped (main moved); release continues"
           fi
 
       - name: Download all artifacts
