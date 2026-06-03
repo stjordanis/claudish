@@ -1170,36 +1170,6 @@ function renderLeaderboard(
   w("\n");
 }
 
-/**
- * Print ONLY the leaderboard section to stderr — used on quit from the
- * interactive Details view so a durable, scrollback-able summary persists after
- * the TUI tears down. No detail cards, no legend, no tip footer. Reuses the same
- * shared scales + renderLeaderboard path as the full static printer.
- */
-export function printLeaderboardScrollback(
-  results: ModelResult[],
-  isLiveProbe: boolean,
-): void {
-  const w: Writer = process.stderr.write.bind(process.stderr);
-  const anyTimedLive =
-    results.some(
-      (r) =>
-        r.directProbe?.state === "live" && r.directProbe.timing !== undefined,
-    ) ||
-    results.some((r) =>
-      (r.chain ?? []).some(
-        (c) => c.probe?.state === "live" && c.probe.timing !== undefined,
-      ),
-    );
-  if (!isLiveProbe || !anyTimedLive) return;
-
-  const scales = computeBarScales(results);
-  const termCols = process.stderr.columns ?? process.stdout.columns ?? 100;
-  const maxAllowed = Math.max(MIN_CARD_WIDTH, termCols - 4);
-  w("\n");
-  renderLeaderboard(results, scales, maxAllowed, w);
-}
-
 export function printProbeResults(
   results: ModelResult[],
   isLiveProbe: boolean,

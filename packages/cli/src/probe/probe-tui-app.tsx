@@ -103,7 +103,7 @@ export interface ProbeModelResult {
 }
 
 export type ProbePhase = "live" | "done";
-export type ProbeTab = "leaderboard" | "details";
+export type ProbeTab = "summary" | "leaderboard" | "details";
 
 export interface ProbeAppState {
   steps: ProbeStepState[];
@@ -716,9 +716,11 @@ function TabBar({ activeTab }: { activeTab: ProbeTab }) {
     <box flexDirection="column" paddingTop={1} paddingBottom={1}>
       <text>
         <span fg={C.dim}>{"  "}</span>
-        {tab("1 Leaderboard", activeTab === "leaderboard")}
+        {tab("1 Summary", activeTab === "summary")}
         <span>{" "}</span>
-        {tab("2 Details", activeTab === "details")}
+        {tab("2 Leaderboard", activeTab === "leaderboard")}
+        <span>{" "}</span>
+        {tab("3 Details", activeTab === "details")}
       </text>
     </box>
   );
@@ -1114,6 +1116,253 @@ function DetailsView({
   );
 }
 
+// ── Leaderboard view ───────────────────────────────────────────────
+//
+// One row per MODEL, sorted fastest→slowest by the representative route's total
+// time. The representative = the first link that probed live+timed (the route
+// claudish actually uses) — mirrors `pickRepresentative` in the static printer.
+// Models with no live route are listed dim afterwards as "— no live route".
+// The bar-onward columns (timeline / TOTAL / net-srv-str / tok/s) reuse the
+// SAME layout + module constants as the Details tab so the two tabs line up.
+// NO full-row bg slab — rank order + bar length carry the ranking.
+
+interface LeaderRowData {
+  model: string;
+  /** Representative provider's display name (the route that would be used). */
+  provider: string;
+  /** Live+timed timing for the representative; undefined = no live route. */
+  timing?: ProbeTiming;
+}
+
+/**
+ * Representative entry for a model: the first link that probed live AND carried
+ * timing (the route claudish would actually use). The synthetic direct-probe
+ * link is already part of `links` (see ProbeModelResult docs), so iterating the
+ * links is the whole story — there is no separate directProbe field here.
+ */
+function pickRepresentativeLink(result: ProbeModelResult): LeaderRowData {
+  for (const link of result.links) {
+    if (link.probe?.state === "live" && link.probe.timing) {
+      return { model: result.model, provider: link.displayName, timing: link.probe.timing };
+    }
+  }
+  return { model: result.model, provider: result.nativeProvider };
+}
+
+/** One leaderboard data row (a live, timed representative). */
+function LeaderLiveRow({
+  row,
+  rank,
+  isFastest,
+  rankW,
+  nameW,
+  provW,
+  layout,
+  maxTotalMs,
+  maxTokPerSec,
+}: {
+  row: LeaderRowData;
+  rank: number;
+  isFastest: boolean;
+  rankW: number;
+  nameW: number;
+  provW: number;
+  layout: ProbeLayout;
+  maxTotalMs: number;
+  maxTokPerSec: number;
+}) {
+  const t = row.timing!;
+  // Bar-onward columns — IDENTICAL math to DetailLinkRow's live row.
+  const barCells = timelineBarCells(t.totalMs, maxTotalMs, layout.barWidth);
+  const stages = splitStageCells(t.ttfbMs, t.ttftMs, t.totalMs, barCells);
+  const trackCells = Math.max(0, layout.barWidth - barCells);
+
+  const netMs = Math.max(0, t.ttfbMs);
+  const srvMs = Math.max(0, t.ttftMs - t.ttfbMs);
+  const strMs = Math.max(0, t.totalMs - t.ttftMs);
+  const netStr = padStartSafe(breakdownNum(netMs), STAGE_NUM_W);
+  const srvStr = padStartSafe(breakdownNum(srvMs), STAGE_NUM_W);
+  const strStr = padStartSafe(breakdownNum(strMs), STAGE_NUM_W);
+
+  const tokColor = throughputFg(t.tokensPerSec);
+  const tokCells =
+    layout.tokWidth > 0
+      ? tokBarCells(t.tokensPerSec, maxTokPerSec, layout.tokWidth)
+      : 0;
+  const tokTrack = Math.max(0, layout.tokWidth - tokCells);
+  const tokValue = padStartSafe(`${Math.round(t.tokensPerSec)} t/s`, TOK_VALUE_COL);
+
+  // Lead-in: [2 indent][rankW rank][1][● 1][1][nameW name][1][provW provider][1]
+  const lead = (
+    <>
+      <span fg={C.dim}>{"  "}</span>
+      <span fg={C.dim}>{padStartSafe(String(rank), rankW)}</span>
+      <span>{" "}</span>
+      {isFastest ? (
+        <span fg={C.brightGreen}>{"●"}</span>
+      ) : (
+        <span>{" "}</span>
+      )}
+      <span>{" "}</span>
+      <span fg={C.fg} attributes={A.bold}>{padEndSafe(row.model, nameW)}</span>
+      <span>{" "}</span>
+      <span fg={C.dim}>{padEndSafe(row.provider, provW)}</span>
+      <span>{" "}</span>
+    </>
+  );
+
+  if (layout.barWidth <= 0) {
+    // <60-col fallback: name/provider + a single white TOTAL (no bars).
+    return (
+      <text>
+        {lead}
+        <span fg={C.white}>{padStartSafe(formatLatency(t.totalMs), TOTAL_COL)}</span>
+      </text>
+    );
+  }
+
+  return (
+    <text>
+      {lead}
+      {/* TIMELINE bar — bg-on-spaces segments + dim track */}
+      {stages.network > 0 && (
+        <span bg={STAGE_BG.network}>{" ".repeat(stages.network)}</span>
+      )}
+      {stages.server > 0 && (
+        <span bg={STAGE_BG.server}>{" ".repeat(stages.server)}</span>
+      )}
+      {stages.streaming > 0 && (
+        <span bg={STAGE_BG.streaming}>{" ".repeat(stages.streaming)}</span>
+      )}
+      {trackCells > 0 && <span fg={C.dim}>{TRACK_CHAR.repeat(trackCells)}</span>}
+      <span fg={C.dim}>{"  "}</span>
+      {/* TOTAL — right-aligned, white */}
+      <span fg={C.white}>{padStartSafe(formatLatency(t.totalMs), TOTAL_COL)}</span>
+      {/* BREAKDOWN — net/srv/str values only (UNLABELED), STAGE_FG-colored. The
+          leaderboard's labels live in the column header (mirrors the static
+          renderLeaderboard, whose data rows are bare values too), so this is the
+          narrow 22-wide variant — not the cards'/Details' labeled 34-wide one. */}
+      {layout.showBreakdown && (
+        <>
+          <span fg={C.dim}>{"  "}</span>
+          <span fg={STAGE_FG.network}>{netStr}</span>
+          <span fg={C.dim}>{" "}</span>
+          <span fg={STAGE_FG.server}>{srvStr}</span>
+          <span fg={C.dim}>{" "}</span>
+          <span fg={STAGE_FG.streaming}>{strStr}</span>
+        </>
+      )}
+      {/* TOK/S bar — fg block on dim track, heat-colored */}
+      {layout.tokWidth > 0 && (
+        <>
+          <span fg={C.dim}>{"  "}</span>
+          {tokCells > 0 && <span fg={tokColor}>{BAR_FILL.repeat(tokCells)}</span>}
+          {tokTrack > 0 && <span fg={C.dim}>{TRACK_CHAR.repeat(tokTrack)}</span>}
+          <span fg={C.dim}>{" "}</span>
+        </>
+      )}
+      {layout.tokWidth === 0 && <span fg={C.dim}>{"  "}</span>}
+      <span fg={tokColor}>{tokValue}</span>
+    </text>
+  );
+}
+
+function LeaderboardView({
+  results,
+  layout,
+  maxTotalMs,
+  maxTokPerSec,
+}: {
+  results: ProbeModelResult[];
+  layout: ProbeLayout;
+  maxTotalMs: number;
+  maxTokPerSec: number;
+}) {
+  const reps = results.map(pickRepresentativeLink);
+  const live = reps
+    .filter((r) => r.timing)
+    .sort((a, b) => a.timing!.totalMs - b.timing!.totalMs);
+  const unavailable = reps.filter((r) => !r.timing);
+
+  // Name + provider columns: widest entry, clamped (mirrors renderLeaderboard's
+  // min(28) / min(max(8,…),18)). Shared across all rows so bars start at one x.
+  const nameW = Math.min(28, Math.max(5, ...reps.map((r) => r.model.length)));
+  const provW = Math.min(18, Math.max(8, ...reps.map((r) => r.provider.length)));
+  const rankW = Math.max(1, String(Math.max(1, live.length)).length);
+
+  // Column header — aligned to the data rows. The data-row lead-in before the
+  // name spans rankW + 3 (gap + ● slot + gap), matching LeaderLiveRow's lead.
+  const rankHdr = " ".repeat(rankW) + "   ";
+
+  return (
+    <box flexDirection="column">
+      {/* Title */}
+      <text>
+        <span fg={C.dim}>{"  "}</span>
+        <span fg={C.cyan} attributes={A.bold}>{"Leaderboard"}</span>
+        <span fg={C.dim}>{" — fastest first"}</span>
+      </text>
+      {/* Column header (dim) */}
+      <text>
+        <span fg={C.dim}>{"  " + rankHdr}</span>
+        <span fg={C.dim}>{padEndSafe("MODEL", nameW)}</span>
+        <span fg={C.dim}>{" "}</span>
+        <span fg={C.dim}>{padEndSafe("PROVIDER", provW)}</span>
+        <span fg={C.dim}>{" "}</span>
+        {layout.barWidth > 0 && (
+          <span fg={C.dim}>{padEndSafe("TIMELINE", layout.barWidth)}</span>
+        )}
+        <span fg={C.dim}>{"  "}</span>
+        <span fg={C.dim}>{padStartSafe("TOTAL", TOTAL_COL)}</span>
+        {layout.showBreakdown && (
+          // Mirror the static renderLeaderboard header (probe-results-printer.ts):
+          // the data column is "  " + val6 + " " + val6 + " " + val6, so the header
+          // is "  " + padEnd("net",6) + " " + padEnd("srv",6) + " " + padEnd("str",6)
+          // — left-aligned labels over the right-aligned value columns. Same
+          // convention as the piped output and the spec example.
+          <span fg={C.dim}>
+            {"  " + padEndSafe("net", STAGE_NUM_W) +
+              " " + padEndSafe("srv", STAGE_NUM_W) +
+              " " + padEndSafe("str", STAGE_NUM_W)}
+          </span>
+        )}
+        {layout.tokWidth > 0 ? (
+          // Data: "  " + tokBar(tokWidth) + " " + tokValue(TOK_VALUE_COL). The
+          // caption sits over the value column (right-aligned like the value).
+          <span fg={C.dim}>{"  " + " ".repeat(layout.tokWidth + 1) + padStartSafe("tok/s", TOK_VALUE_COL)}</span>
+        ) : (
+          <span fg={C.dim}>{"  " + padStartSafe("tok/s", TOK_VALUE_COL)}</span>
+        )}
+      </text>
+      {/* Live rows — fastest first */}
+      {live.map((row, idx) => (
+        <LeaderLiveRow
+          key={`lb:${row.model}`}
+          row={row}
+          rank={idx + 1}
+          isFastest={idx === 0}
+          rankW={rankW}
+          nameW={nameW}
+          provW={provW}
+          layout={layout}
+          maxTotalMs={maxTotalMs}
+          maxTokPerSec={maxTokPerSec}
+        />
+      ))}
+      {/* Unavailable models — dim, no bar. Provider column kept aligned. */}
+      {unavailable.map((row) => (
+        <text key={`lb-na:${row.model}`}>
+          <span fg={C.dim}>{"  " + " ".repeat(rankW) + "   "}</span>
+          <span fg={C.dim}>{padEndSafe(row.model, nameW)}</span>
+          <span fg={C.dim}>{" "}</span>
+          <span fg={C.dim}>{padEndSafe(row.provider, provW)}</span>
+          <span fg={C.dim}>{" — no live route"}</span>
+        </text>
+      ))}
+    </box>
+  );
+}
+
 export function ProbeApp({
   store,
   onQuit,
@@ -1134,10 +1383,10 @@ export function ProbeApp({
   const listScrollRef = useRef<ScrollBoxRenderable | null>(null);
 
   // Keyboard handler. In the "done" phase it also handles tab switching
-  // (Tab/Shift+Tab/1/2) and quit (q/Esc) — resolving the quit promise via
-  // onQuit so cli.ts can print the leaderboard to scrollback + shut down.
+  // (Tab/Shift+Tab/1/2/3) and quit (q/Esc) — resolving the quit promise via
+  // onQuit so cli.ts can shut down cleanly (nothing dumped to scrollback).
   // Scrolling (arrows / j-k / PgUp-PgDn / g-G) drives the single scrollbox on
-  // BOTH tabs (its children swap by activeTab; the ref stays stable).
+  // ALL THREE tabs (its children swap by activeTab; the ref stays stable).
   useKeyboard((key) => {
     // Quit + tab switching only matter once the interactive phase is up.
     if (isDone) {
@@ -1146,19 +1395,24 @@ export function ProbeApp({
         return;
       }
       if (key.name === "tab") {
-        // Tab / Shift+Tab toggle between the two tabs.
-        store.setActiveTab(
-          store.getState().activeTab === "leaderboard"
-            ? "details"
-            : "leaderboard",
-        );
+        // Tab cycles forward through the three tabs; Shift+Tab cycles back.
+        const order: ProbeTab[] = ["summary", "leaderboard", "details"];
+        const cur = order.indexOf(store.getState().activeTab);
+        const next = key.shift
+          ? (cur - 1 + order.length) % order.length
+          : (cur + 1) % order.length;
+        store.setActiveTab(order[next]);
         return;
       }
       if (key.name === "1") {
-        store.setActiveTab("leaderboard");
+        store.setActiveTab("summary");
         return;
       }
       if (key.name === "2") {
+        store.setActiveTab("leaderboard");
+        return;
+      }
+      if (key.name === "3") {
         store.setActiveTab("details");
         return;
       }
@@ -1244,17 +1498,23 @@ export function ProbeApp({
   // No live generator produced tokens → no fastest crown.
   if (fastestTokPerSec <= 0) fastestLinkId = null;
 
+  // Three-way tab selector (DONE phase). The legend + the grouped Summary rows
+  // belong to the "summary" tab; the new Leaderboard + Details tabs render their
+  // own headers inside the scrollbox. While LIVE we always show the grouped rows
+  // (+ legend) regardless of activeTab.
   const showDetails = isDone && state.activeTab === "details";
+  const showLeaderboard = isDone && state.activeTab === "leaderboard";
+  const showSummary = !showDetails && !showLeaderboard; // includes the LIVE phase
 
   // Viewport height for the scrollable list = terminal rows minus the fixed
   // chrome. In the LIVE phase that's banner + steps block + top legend + scroll
   // hint. In the DONE phase the steps block is gone and a tab-bar row takes its
-  // place; the legend only shows on the Leaderboard tab. Floored so a short
+  // place; the legend only shows on the Summary tab. Floored so a short
   // terminal can't produce a zero height.
   // LIVE phase now uses a SINGLE compact StepLine (was N rows + paddingY).
   const stepsRows = isDone ? 0 : state.steps.length > 0 ? 1 : 0;
   const tabBarRows = isDone ? TAB_BAR_ROWS : 0;
-  const legendRows = showDetails ? 0 : LEGEND_ROWS;
+  const legendRows = showSummary ? LEGEND_ROWS : 0;
   const listH = Math.max(
     MIN_LIST_H,
     termHeight -
@@ -1280,7 +1540,7 @@ export function ProbeApp({
   // quit appear in the done phase regardless (they always apply).
   const scrollKeys = "↑↓ scroll · PgUp/PgDn page · g/G top/bottom";
   const footerHint = isDone
-    ? "  " + (overflow ? scrollKeys + " · " : "") + "Tab/1/2 switch · q quit"
+    ? "  " + (overflow ? scrollKeys + " · " : "") + "Tab/1/2/3 switch · q quit"
     : "  " + (overflow ? scrollKeys : "");
 
   return (
@@ -1309,20 +1569,20 @@ export function ProbeApp({
 
       {groups.length > 0 ? (
         <>
-          {/* The Leaderboard tab keeps the run legend; Details has its own
-              header text inside the scrollbox. Wrapped in a FIXED-HEIGHT box so
-              its cell footprint is stable frame-to-frame — an unconstrained
-              column here lets OpenTUI's inline diff bleed the scrollbox's first
-              frame up into the legend's last line (the banner had the same bug,
-              fixed the same way). */}
-          {!showDetails && (
+          {/* The Summary tab keeps the run legend; the Leaderboard + Details
+              tabs have their own header text inside the scrollbox. Wrapped in a
+              FIXED-HEIGHT box so its cell footprint is stable frame-to-frame —
+              an unconstrained column here lets OpenTUI's inline diff bleed the
+              scrollbox's first frame up into the legend's last line (the banner
+              had the same bug, fixed the same way). */}
+          {showSummary && (
             <box flexDirection="column" height={LEGEND_ROWS}>
               <Legend rowWidth={rowWidth} />
             </box>
           )}
           {/* Single native OpenTUI scrollbox — its children swap by activeTab so
-              BOTH tabs scroll (wheel + keys) through one stable ref. The view
-              scrolls WITHIN a fixed viewport so a long run never pushes the
+              ALL THREE tabs scroll (wheel + keys) through one stable ref. The
+              view scrolls WITHIN a fixed viewport so a long run never pushes the
               banner off-screen. */}
           <scrollbox
             ref={listScrollRef}
@@ -1336,6 +1596,13 @@ export function ProbeApp({
                 results={state.results}
                 layout={layout}
                 termWidth={termWidth}
+                maxTotalMs={maxTotalMs}
+                maxTokPerSec={maxTokPerSec}
+              />
+            ) : showLeaderboard ? (
+              <LeaderboardView
+                results={state.results}
+                layout={layout}
                 maxTotalMs={maxTotalMs}
                 maxTokPerSec={maxTokPerSec}
               />

@@ -67,7 +67,6 @@ import type {
 } from "./probe/probe-tui-app.js";
 import {
   printProbeResults,
-  printLeaderboardScrollback,
   type ModelResult as PrintableModelResult,
 } from "./probe/probe-results-printer.js";
 // Re-export from centralized provider-resolver for backwards compatibility
@@ -1539,7 +1538,7 @@ async function probeModelRouting(
     links: [],
     phase: "live",
     results: [],
-    activeTab: "leaderboard",
+    activeTab: "summary",
   };
   const tui = await startProbeTui(initialState);
 
@@ -1784,9 +1783,8 @@ async function probeModelRouting(
       tui.store.setResults(results);
       await tui.waitForQuit();
       await tui.shutdown();
-      // Leave the leaderboard frame in scrollback (durable result after the TUI
-      // tears down) so the original "scrollback-able results" ask still holds.
-      printLeaderboardScrollback(printable, isLiveProbe);
+      // Clean exit: nothing dumped to scrollback. Everything (Summary,
+      // Leaderboard, Details) was viewable in the tabs while the app ran.
     } else {
       // Non-TTY / piped path — keep today's behavior. Shut down the renderer
       // cleanly BEFORE printing static output (avoids the OpenTUI in-place
