@@ -36,7 +36,6 @@ all-models.json
 
 # Claude Code local files
 .claude/
-.claudemem/
 
 # npm lockfile (we use bun.lock)
 package-lock.json
