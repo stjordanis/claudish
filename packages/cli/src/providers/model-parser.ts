@@ -17,7 +17,8 @@
  *   mm, mmax      -> minimax
  *   kimi, moon    -> kimi/moonshot
  *   glm, zhipu    -> glm/zhipu
- *   zai           -> z.ai
+ *   z-ai, zai     -> z-ai (z.ai)
+ *   x-ai, grok    -> x-ai (xAI / Grok)
  *   oc            -> ollamacloud
  *   zen           -> opencode-zen
  *   v, vertex     -> vertex
@@ -36,7 +37,7 @@
  *   moonshot/*, kimi-*     -> kimi (direct)
  *   zhipu/*, glm-*         -> glm (direct)
  *   deepseek/*, deepseek-*  -> auto-routed (no direct API, falls to OpenRouter)
- *   x-ai/*, grok-*         -> xai (direct with XAI_API_KEY, else OpenRouter)
+ *   x-ai/*, grok-*         -> x-ai (direct with XAI_API_KEY, else OpenRouter)
  *   qwen/*,  qwen*         -> auto-routed (no direct API, falls to OpenRouter)
  *   anthropic/*            -> native-anthropic
  *   (anything else with /) -> openrouter

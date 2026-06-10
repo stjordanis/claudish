@@ -2,6 +2,21 @@
 
 All notable changes to [Claudish](https://github.com/MadAppGang/claudish).
 
+## [7.5.0] - 2026-06-10
+
+### New Features
+
+- `claudish serve --port <n> --models <path>` — standalone inference gateway for Claude Desktop's third-party inference mode. Advertises Claude-recognized slot ids on `GET /v1/models` and rewrites each request to the real model assigned that slot *(serve)*
+- `claudish providers --json` — credential-presence report (no key material) so external tooling can tell which providers are configured on this machine *(serve)*
+
+### Refactor
+
+- canonical provider slug rename `xai`→`x-ai`, `zai`→`z-ai` to align with the Firebase model catalog. Old `xai`/`zai` forms kept as input aliases; credentials unaffected *(providers)*
+
+### Documentation
+
+- add `docs/serve-gateway.md` — Claude Desktop gateway handoff: models.json contract, slot routing, live-catalog routing-alignment validation, and dev-build instructions *(serve)*
+
 ## [7.4.0] - 2026-06-03
 
 ### Bug Fixes

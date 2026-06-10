@@ -30,8 +30,8 @@ const PROVIDER_HINT_MAP: Record<string, ProviderHintInfo> = {
   ollamacloud: { apiKeyEnvVar: "OLLAMA_API_KEY" },
   "native-anthropic": { apiKeyEnvVar: "ANTHROPIC_API_KEY" },
   openrouter: { apiKeyEnvVar: "OPENROUTER_API_KEY" },
-  xai: { apiKeyEnvVar: "XAI_API_KEY" },
-  zai: { apiKeyEnvVar: "ZAI_API_KEY" },
+  "x-ai": { apiKeyEnvVar: "XAI_API_KEY" },
+  "z-ai": { apiKeyEnvVar: "ZAI_API_KEY" },
   "opencode-zen": { apiKeyEnvVar: "OPENCODE_API_KEY" },
 };
 

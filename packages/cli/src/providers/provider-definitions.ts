@@ -223,7 +223,7 @@ export const BUILTIN_PROVIDERS: ProviderDefinition[] = [
 
   // ── xAI / Grok (OpenAI-compatible) ──────────────────────────────────
   {
-    name: "xai",
+    name: "x-ai",
     displayName: "xAI",
     transport: "openai",
     tokenStrategy: "delta-aware",
@@ -232,8 +232,11 @@ export const BUILTIN_PROVIDERS: ProviderDefinition[] = [
     apiKeyEnvVar: "XAI_API_KEY",
     apiKeyDescription: "xAI API Key",
     apiKeyUrl: "https://console.x.ai/",
-    shortcuts: ["xai", "grok"],
-    shortestPrefix: "xai",
+    // Canonical name is "x-ai" (matches the Firebase catalog slug). The bare
+    // "xai" and "grok" forms remain as input aliases so existing `xai@...`
+    // commands and scripts keep routing.
+    shortcuts: ["x-ai", "xai", "grok"],
+    shortestPrefix: "x-ai",
     legacyPrefixes: [{ prefix: "xai/", stripPrefix: true }],
     nativeModelPatterns: [{ pattern: /^x-ai\//i }, { pattern: /^grok-/i }],
     isDirectApi: true,
@@ -383,7 +386,7 @@ export const BUILTIN_PROVIDERS: ProviderDefinition[] = [
 
   // ── Z.AI (Anthropic-compatible GLM API) ────────────────────────────
   {
-    name: "zai",
+    name: "z-ai",
     displayName: "Z.AI",
     transport: "anthropic",
     baseUrl: "https://api.z.ai",
@@ -392,12 +395,14 @@ export const BUILTIN_PROVIDERS: ProviderDefinition[] = [
     apiKeyEnvVar: "ZAI_API_KEY",
     apiKeyDescription: "Z.AI API Key",
     apiKeyUrl: "https://z.ai/",
-    shortcuts: ["zai"],
-    shortestPrefix: "zai",
+    // Canonical name is "z-ai" (matches the Firebase catalog slug). Bare "zai"
+    // stays as an input alias for existing `zai@...` commands.
+    shortcuts: ["z-ai", "zai"],
+    shortestPrefix: "z-ai",
     legacyPrefixes: [{ prefix: "zai/", stripPrefix: true }],
     nativeModelPatterns: [{ pattern: /^z-ai\//i }, { pattern: /^zai\//i }],
     isDirectApi: true,
-    description: "Z.AI API (zai@)",
+    description: "Z.AI API (z-ai@)",
   },
 
   // ── OllamaCloud ────────────────────────────────────────────────────

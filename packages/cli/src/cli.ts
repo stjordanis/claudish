@@ -1361,7 +1361,7 @@ async function probeModelRouting(
     let formatAdapterName = "OpenAIAPIFormat";
     let declaredStreamFormat = "openai-sse";
 
-    const anthropicCompatProviders = ["minimax", "minimax-coding", "kimi", "kimi-coding", "zai"];
+    const anthropicCompatProviders = ["minimax", "minimax-coding", "kimi", "kimi-coding", "z-ai"];
     const isMinimaxModel = modelName.toLowerCase().includes("minimax");
 
     if (anthropicCompatProviders.includes(providerName)) {
@@ -1832,7 +1832,8 @@ MODEL ROUTING:
     mm, mmax     -> MiniMax Direct    mm@MiniMax-M2.1
     kimi, moon   -> Kimi Direct       kimi@kimi-k2-thinking-turbo
     glm, zhipu   -> GLM Direct        glm@glm-4.7
-    zai          -> Z.AI Direct       zai@glm-4.7
+    z-ai, zai    -> Z.AI Direct       z-ai@glm-4.7
+    x-ai, grok   -> xAI / Grok        x-ai@grok-3
     oc           -> OllamaCloud       oc@llama-3.1
     llama,lc,meta-> OllamaCloud       llama@llama-3.1
     zen          -> OpenCode Zen      zen@grok-code

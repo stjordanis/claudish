@@ -49,9 +49,9 @@ describe("DEFAULT_ROUTING_RULES pattern matching", () => {
     expect(matched).toEqual(["gemini-codeassist", "google", "openrouter"]);
   });
 
-  test("'grok-4' matches grok-* → [xai, openrouter]", () => {
+  test("'grok-4' matches grok-* → [x-ai, openrouter]", () => {
     const matched = matchRoutingRule("grok-4", DEFAULT_ROUTING_RULES);
-    expect(matched).toEqual(["xai", "openrouter"]);
+    expect(matched).toEqual(["x-ai", "openrouter"]);
   });
 
   test("'kimi-k2.5' matches kimi-* → [kimi-coding@kimi-for-coding, kimi, openrouter]", () => {
@@ -100,9 +100,9 @@ describe("DEFAULT_ROUTING_RULES pattern matching", () => {
     expect(matched).toEqual(["glm-coding", "glm", "openrouter"]);
   });
 
-  test("'z-ai-glm-4.6' matches z-ai-* → [zai, openrouter]", () => {
+  test("'z-ai-glm-4.6' matches z-ai-* → [z-ai, openrouter]", () => {
     const matched = matchRoutingRule("z-ai-glm-4.6", DEFAULT_ROUTING_RULES);
-    expect(matched).toEqual(["zai", "openrouter"]);
+    expect(matched).toEqual(["z-ai", "openrouter"]);
   });
 
   test("'deepseek-v3.5' matches deepseek-* → [deepseek, openrouter]", () => {

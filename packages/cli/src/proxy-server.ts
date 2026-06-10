@@ -36,12 +36,40 @@ import { createHandlerForProvider } from "./providers/provider-profiles.js";
 import { loadCustomEndpoints } from "./providers/custom-endpoints-loader.js";
 import { getApiKey, loadConfig } from "./profile-config.js";
 
+/**
+ * A single slot-routing entry for `claudish serve`. Claude Desktop sends
+ * `body.model = <slot>` (a Claude-recognized id it accepts into its picker);
+ * we route that to the user's real `model` on `provider`.
+ *
+ *   provider: a pinned provider slug (canonical BUILTIN_PROVIDERS name, e.g.
+ *             "x-ai", "google", "openrouter"), or null/undefined = autoroute
+ *             (let claudish's existing auto-chain pick).
+ */
+export interface SlotRoute {
+  model: string;
+  provider?: string | null;
+}
+
 export interface ProxyServerOptions {
   summarizeTools?: boolean; // Summarize tool descriptions for local models
   quiet?: boolean; // Suppress informational stderr output (e.g., [Auto-route])
   isInteractive?: boolean; // Whether the current session is interactive (gates consent prompt)
   advisorModels?: string[]; // Advisor models from --advisor flag
   advisorCollector?: string | null; // Collector model (null = no synthesis)
+  /**
+   * Exact slot-id → real-model map for `claudish serve` (Claude Desktop
+   * redirect). Consulted BEFORE the substring tier `modelMap` in
+   * getHandlerForRequest, so distinct slots that share a tier substring
+   * (e.g. two "opus" slots) don't collide. Optional — existing callers
+   * leave it undefined and behavior is unchanged.
+   */
+  slotMap?: Map<string, SlotRoute>;
+  /**
+   * Slot ids this gateway advertises on `GET /v1/models` (Claude Desktop
+   * builds its picker only from a live /v1/models call). These MUST be the
+   * Claude-recognized slot ids, not the real model ids. Defaults to [].
+   */
+  servedSlotIds?: string[];
 }
 
 export async function createProxyServer(
@@ -317,12 +345,36 @@ export async function createProxyServer(
     if (monitorMode) return nativeHandler;
 
     // 2. Resolve target model based on mappings or defaults
-    // Priority: role mappings > default model (--model) > requested model (native)
+    // Priority: exact slot map > role mappings > default model (--model) > requested model (native)
     let target = requestedModel;
     let wasFromModelMap = false;
 
+    // 2a. Exact slot-id map (claudish serve / Claude Desktop redirect).
+    // Claude Desktop sends body.model = a Claude-recognized SLOT id; route it
+    // to the real model the user assigned that slot. Checked BEFORE the
+    // substring tier match below so two slots sharing a tier substring
+    // (e.g. claude-opus-4-1 + claude-opus-4-20250514) route distinctly
+    // instead of colliding. Rewrite `target` and fall through to the existing
+    // pipeline (explicit-provider path for pinned, auto-route + catalog
+    // resolution for null-provider, native passthrough for claude-* reals).
+    let slotMatched = false;
+    const slot = options.slotMap?.get(requestedModel);
+    if (slot) {
+      target =
+        slot.provider != null && slot.provider !== ""
+          ? `${slot.provider}@${slot.model}`
+          : slot.model;
+      slotMatched = true;
+      if (!options.quiet) {
+        logStderr(`[Serve] slot ${requestedModel} → ${target}`);
+      }
+    }
+
     const req = requestedModel.toLowerCase();
-    if (modelMap) {
+    if (slotMatched) {
+      // Slot map already set `target` — skip the substring tier match and the
+      // --model fallback entirely so they can't override the exact mapping.
+    } else if (modelMap) {
       // Role-specific mappings take highest priority
       if (req.includes("opus") && modelMap.opus) {
         target = modelMap.opus;
@@ -471,6 +523,27 @@ export async function createProxyServer(
     })
   );
   app.get("/health", (c) => c.json({ status: "ok" }));
+
+  // Model discovery for Claude Desktop "third-party inference" mode.
+  // The app builds its model picker ONLY from a live GET /v1/models, and
+  // silently drops any id it doesn't recognize — so `serve` advertises the
+  // Claude-recognized SLOT ids here (supplied via options.servedSlotIds),
+  // NOT the real model ids those slots route to. Defaults to an empty list
+  // for non-serve callers (the picker is irrelevant to them).
+  const servedSlotIds = options.servedSlotIds ?? [];
+  app.get("/v1/models", (c) => {
+    return c.json({
+      object: "list",
+      has_more: false,
+      data: servedSlotIds.map((id) => ({
+        id,
+        object: "model",
+        type: "model",
+        created: 1716000000,
+        owned_by: "claudish",
+      })),
+    });
+  });
 
   /**
    * Probe-model discovery for self-hosted / user-deployed providers

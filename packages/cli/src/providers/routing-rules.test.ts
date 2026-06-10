@@ -542,11 +542,11 @@ describe("route() with defaultProvider", () => {
   test("defaultProvider appended after matched chain when not already present", () => {
     process.env.OPENAI_API_KEY = "oai-test";
     process.env.XAI_API_KEY = "xai-test";
-    const plan = route("gpt-5", { "gpt-*": ["openai"] }, "xai");
+    const plan = route("gpt-5", { "gpt-*": ["openai"] }, "x-ai");
     expect(plan.kind).toBe("ok");
     if (plan.kind !== "ok") return;
     expect(plan.primary.provider).toBe("openai");
-    expect(plan.fallbacks.map((r) => r.provider)).toEqual(["xai"]);
+    expect(plan.fallbacks.map((r) => r.provider)).toEqual(["x-ai"]);
   });
 
   test("defaultProvider deduped if already present in chain", () => {
@@ -569,10 +569,10 @@ describe("route() with defaultProvider", () => {
 
   test("defaultProvider rescues when matched chain has no credentialed providers", () => {
     process.env.XAI_API_KEY = "xai-test";
-    const plan = route("deepseek-r1", { "deepseek-*": ["deepseek"] }, "xai");
+    const plan = route("deepseek-r1", { "deepseek-*": ["deepseek"] }, "x-ai");
     expect(plan.kind).toBe("ok");
     if (plan.kind !== "ok") return;
-    expect(plan.primary.provider).toBe("xai");
+    expect(plan.primary.provider).toBe("x-ai");
   });
 
   test("defaultProvider undefined → identical behavior to omitted argument", () => {

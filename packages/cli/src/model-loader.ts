@@ -194,8 +194,8 @@ const SEARCH_FETCH_TIMEOUT_MS = 10000;
 export const FIREBASE_SLUG_TO_PROVIDER_NAME: Record<string, string> = {
   openai: "openai",
   google: "google",
-  "x-ai": "xai",
-  "z-ai": "zai",
+  "x-ai": "x-ai",
+  "z-ai": "z-ai",
   moonshotai: "kimi",
   minimax: "minimax",
   qwen: "qwen",

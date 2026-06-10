@@ -692,7 +692,7 @@ describe("ProviderProfile table completeness", () => {
       "minimax-coding",
       "kimi",
       "kimi-coding",
-      "zai",
+      "z-ai",
       "glm",
       "glm-coding",
       "opencode-zen",

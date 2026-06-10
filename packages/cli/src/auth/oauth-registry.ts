@@ -19,7 +19,7 @@ interface OAuthProviderDescriptor {
  *   - glm           (ZHIPU_API_KEY) - API key only
  *   - glm-coding    (GLM_CODING_API_KEY) - API key only
  *   - ollamacloud   (OLLAMA_API_KEY) - API key only
- *   - zai           (ZAI_API_KEY) - API key only
+ *   - z-ai          (ZAI_API_KEY) - API key only
  *   - litellm       (LITELLM_API_KEY) - API key only
  *   - vertex        (VERTEX_API_KEY / VERTEX_PROJECT) - uses ADC / service account
  *

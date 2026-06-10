@@ -28,7 +28,7 @@ describe("pickerProviderToFirebaseSlug", () => {
     ["gemini-codeassist", "google"], // subscription routes through owner catalog
     ["openai", "openai"],
     ["openai-codex", "openai"], // subscription routes through owner catalog
-    ["xai", "x-ai"],
+    ["x-ai", "x-ai"],
     ["deepseek", "deepseek"],
     ["minimax", "minimax"],
     ["minimax-coding", "minimax"],
@@ -36,7 +36,7 @@ describe("pickerProviderToFirebaseSlug", () => {
     ["kimi-coding", "moonshotai"],
     ["glm", "z-ai"],
     ["glm-coding", "z-ai"],
-    ["zai", "z-ai"],
+    ["z-ai", "z-ai"],
     ["zen", "opencode-zen"], // <-- the original bug: picker value "zen" must map cleanly
     ["opencode-zen", "opencode-zen"],
     ["opencode-zen-go", "opencode-zen-go"],
@@ -68,11 +68,11 @@ describe("isUserDeployedProvider", () => {
     ["google"],
     ["openai"],
     ["openai-codex"],
-    ["xai"],
+    ["x-ai"],
     ["minimax"],
     ["kimi"],
     ["glm"],
-    ["zai"],
+    ["z-ai"],
     ["ollamacloud"], // cloud-hosted; Firebase has the catalog
   ])("%p is NOT user-deployed", (value) => {
     expect(isUserDeployedProvider(value)).toBe(false);
@@ -88,7 +88,7 @@ describe("buildExplicitModelSpec", () => {
     ["google", "gemini-2.5-pro", "google@gemini-2.5-pro"],
     ["openai", "gpt-5", "oai@gpt-5"],
     ["openai-codex", "gpt-5-codex", "cx@gpt-5-codex"],
-    ["xai", "grok-4", "xai@grok-4"],
+    ["x-ai", "grok-4", "x-ai@grok-4"],
     ["deepseek", "deepseek-v3", "ds@deepseek-v3"],
     ["minimax", "MiniMax-M2", "mm@MiniMax-M2"],
     ["minimax-coding", "MiniMax-M2", "mmc@MiniMax-M2"],
@@ -96,7 +96,7 @@ describe("buildExplicitModelSpec", () => {
     ["kimi-coding", "kimi-for-coding", "kc@kimi-for-coding"],
     ["glm", "glm-4-plus", "glm@glm-4-plus"],
     ["glm-coding", "glm-4-plus", "gc@glm-4-plus"],
-    ["zai", "z-ai-plus", "zai@z-ai-plus"],
+    ["z-ai", "z-ai-plus", "z-ai@z-ai-plus"],
     ["ollamacloud", "llama-3.1-70b", "oc@llama-3.1-70b"],
     ["ollama", "llama3.2", "ollama@llama3.2"],
     ["lmstudio", "qwen2.5-7b", "lmstudio@qwen2.5-7b"],
@@ -163,7 +163,7 @@ describe("CatalogClient integration for the original Zen bug", () => {
           modelId: "grok-4",
           aliases: [],
           sources: {},
-          aggregators: [{ provider: "xai", externalId: "grok-4", confidence: "api_official" as const }],
+          aggregators: [{ provider: "x-ai", externalId: "grok-4", confidence: "api_official" as const }],
         },
       ],
       models: [],

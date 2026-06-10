@@ -619,7 +619,7 @@ const KNOWN_PROVIDERS = new Set([
   "openai",
   "anthropic",
   "google",
-  "xai",
+  "x-ai",
   "mistral",
   "moonshot",
   "deepseek",

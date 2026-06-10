@@ -74,7 +74,7 @@ export const pickerProviderToFirebaseSlug: Record<string, string> = {
   "gemini-codeassist": "google",
   openai: "openai",
   "openai-codex": "openai",
-  xai: "x-ai",
+  "x-ai": "x-ai",
   deepseek: "deepseek",
   minimax: "minimax",
   "minimax-coding": "minimax",
@@ -82,7 +82,7 @@ export const pickerProviderToFirebaseSlug: Record<string, string> = {
   "kimi-coding": "moonshotai",
   glm: "z-ai",
   "glm-coding": "z-ai",
-  zai: "z-ai",
+  "z-ai": "z-ai",
   zen: "opencode-zen",
   "opencode-zen": "opencode-zen",
   "opencode-zen-go": "opencode-zen-go",
@@ -106,15 +106,15 @@ export function isUserDeployedProvider(value: string): boolean {
 /**
  * Friendly display name for a Firebase provider slug. Routes through
  * `provider-definitions.ts` `getDisplayName()` after mapping Firebase
- * vendor slugs (e.g. "x-ai", "moonshotai") to the canonical claudish
- * provider name (e.g. "xai", "kimi"). For genuinely unknown slugs
- * (e.g. "perplexity") the canonical-name path falls back to a
- * capitalized rendering of the slug.
+ * vendor slugs (e.g. "moonshotai") to the canonical claudish provider
+ * name (e.g. "kimi"). For genuinely unknown slugs (e.g. "perplexity")
+ * the canonical-name path falls back to a capitalized rendering of the
+ * slug. (Note: "x-ai"/"z-ai" now match the catalog slug 1:1.)
  */
 function firebaseSlugToProviderName(slug: string): string {
   const lower = slug.toLowerCase();
   // Reverse-lookup: pick the FIRST picker-value that maps to this slug.
-  // Order matters — the more "canonical" entries (e.g. "xai" before
+  // Order matters — the more "canonical" entries (e.g. "x-ai" before
   // "openai-codex") sit higher in pickerProviderToFirebaseSlug.
   for (const [pickerValue, firebaseSlug] of Object.entries(pickerProviderToFirebaseSlug)) {
     if (firebaseSlug === lower) return pickerValue;
@@ -429,8 +429,9 @@ const PROVIDER_FILTER_ALIASES: Record<string, string> = {
   oai: "openai",
   codex: "openai-codex",
   cx: "openai-codex",
-  xai: "xai",
-  grok: "xai",
+  "x-ai": "x-ai",
+  xai: "x-ai",
+  grok: "x-ai",
   minimax: "minimax",
   mm: "minimax",
   "minimax-coding": "minimax-coding",
@@ -443,7 +444,8 @@ const PROVIDER_FILTER_ALIASES: Record<string, string> = {
   glm: "glm",
   "glm-coding": "glm-coding",
   gc: "glm-coding",
-  zai: "zai",
+  "z-ai": "z-ai",
+  zai: "z-ai",
   zen: "zen",
   ollamacloud: "ollamacloud",
   oc: "ollamacloud",
@@ -729,7 +731,7 @@ const ALL_PROVIDER_CHOICES: Array<{
     description: "ChatGPT Plus/Pro subscription (Responses API)",
     provider: "openai-codex",
   },
-  { name: "xAI / Grok", value: "xai", description: "Direct API", provider: "xai" },
+  { name: "xAI / Grok", value: "x-ai", description: "Direct API", provider: "x-ai" },
   { name: "DeepSeek", value: "deepseek", description: "Direct API", provider: "deepseek" },
   { name: "MiniMax", value: "minimax", description: "Direct API", provider: "minimax" },
   {
@@ -752,7 +754,7 @@ const ALL_PROVIDER_CHOICES: Array<{
     description: "Coding subscription",
     provider: "glm-coding",
   },
-  { name: "Z.AI", value: "zai", description: "Direct API", provider: "zai" },
+  { name: "Z.AI", value: "z-ai", description: "Direct API", provider: "z-ai" },
   {
     name: "OllamaCloud",
     value: "ollamacloud",
@@ -802,7 +804,7 @@ const PROVIDER_MODEL_PREFIX: Record<string, string> = {
   google: "google@",
   openai: "oai@",
   "openai-codex": "cx@",
-  xai: "xai@",
+  "x-ai": "x-ai@",
   deepseek: "ds@",
   minimax: "mm@",
   kimi: "kimi@",
@@ -810,7 +812,7 @@ const PROVIDER_MODEL_PREFIX: Record<string, string> = {
   "kimi-coding": "kc@",
   glm: "glm@",
   "glm-coding": "gc@",
-  zai: "zai@",
+  "z-ai": "z-ai@",
   ollamacloud: "oc@",
   ollama: "ollama@",
   lmstudio: "lmstudio@",

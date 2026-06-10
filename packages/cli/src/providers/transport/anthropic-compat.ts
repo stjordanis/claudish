@@ -134,7 +134,7 @@ export class AnthropicProviderTransport implements ProviderTransport {
       kimi: "Kimi",
       "kimi-coding": "Kimi Coding",
       moonshot: "Kimi",
-      zai: "Z.AI",
+      "z-ai": "Z.AI",
     };
     return map[name.toLowerCase()] || name.charAt(0).toUpperCase() + name.slice(1);
   }

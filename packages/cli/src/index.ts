@@ -73,6 +73,10 @@ const isTelemetryCommand = firstPositional === "telemetry";
 const isStatsCommand = firstPositional === "stats";
 // Check for interactive config TUI
 const isConfigCommand = firstPositional === "config";
+// Serve subcommand: claudish serve --port <n> --models <path> (Claude Desktop redirect gateway)
+const isServeCommand = firstPositional === "serve";
+// Providers subcommand: claudish providers --json (credential presence, no key material)
+const isProvidersCommand = firstPositional === "providers";
 // Auth subcommands: claudish login [provider], claudish logout [provider]
 const isLoginCommand = firstPositional === "login";
 const isLogoutCommand = firstPositional === "logout";
@@ -87,6 +91,25 @@ const isLegacyKimiLogout = args.includes("--kimi-logout");
 if (isMcpMode) {
   // MCP server mode - dynamic import to keep CLI fast
   import("./mcp-server.js").then((mcp) => mcp.startMcpServer());
+} else if (isServeCommand) {
+  // Standalone inference gateway for Claude Desktop redirect:
+  // claudish serve --port <n> --models <path>
+  const serveArgIndex = args.indexOf("serve");
+  import("./serve-command.js").then((m) =>
+    m.serveCommand(args.slice(serveArgIndex + 1)).catch((e) => {
+      console.error(`[claudish serve] ${e instanceof Error ? e.message : String(e)}`);
+      process.exit(1);
+    })
+  );
+} else if (isProvidersCommand) {
+  // Provider credential presence (no key material): claudish providers --json
+  const json = args.includes("--json");
+  import("./providers-command.js").then((m) =>
+    m.providersCommand({ json }).catch((e) => {
+      console.error(`[claudish providers] ${e instanceof Error ? e.message : String(e)}`);
+      process.exit(1);
+    })
+  );
 } else if (isLoginCommand) {
   // Auth login subcommand: claudish login [provider]
   const loginProviderArg = args.find((a, i) => i > args.indexOf("login") && !a.startsWith("-"));

@@ -37,7 +37,7 @@ export const DEFAULT_ROUTING_RULES: RoutingRules = {
   "gemini-*": ["gemini-codeassist", "google", "openrouter"],
 
   // xAI Grok: direct API, then OpenRouter (no subscription tier).
-  "grok-*": ["xai", "openrouter"],
+  "grok-*": ["x-ai", "openrouter"],
 
   // Kimi: subscription endpoint accepts only "kimi-for-coding" — provider@model
   // rewrite handles that.
@@ -51,7 +51,7 @@ export const DEFAULT_ROUTING_RULES: RoutingRules = {
   "glm-*": ["glm-coding", "glm", "openrouter"],
 
   // Z.AI native models.
-  "z-ai-*": ["zai", "openrouter"],
+  "z-ai-*": ["z-ai", "openrouter"],
 
   // DeepSeek: direct API, OpenRouter.
   "deepseek-*": ["deepseek", "openrouter"],

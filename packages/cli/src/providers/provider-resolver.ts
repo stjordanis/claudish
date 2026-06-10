@@ -16,7 +16,7 @@
  *
  * Provider Categories:
  * - local: ollama@, lmstudio@, vllm@, mlx@, http://... - No API key needed
- * - direct-api: google@, openai@, minimax@, kimi@, glm@, zai@, zen@ - Provider-specific key
+ * - direct-api: google@, openai@, minimax@, kimi@, glm@, z-ai@, x-ai@, zen@ - Provider-specific key
  * - openrouter: openrouter@ or unspecified provider for models with "/" - OPENROUTER_API_KEY
  * - native-anthropic: No "/" in model ID (e.g., claude-3-opus-20240229) - Claude Code native auth
  *

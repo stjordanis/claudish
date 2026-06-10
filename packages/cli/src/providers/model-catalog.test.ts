@@ -98,7 +98,7 @@ describe("modelsByVendor", () => {
         aggregator("opencode-zen", "openai/gpt-5"),
       ]),
       // No opencode-zen → must be filtered out.
-      slimEntry("grok-4", [aggregator("xai", "grok-4")]),
+      slimEntry("grok-4", [aggregator("x-ai", "grok-4")]),
     ];
 
     const fakeProviderQuery = mock(async () => []);

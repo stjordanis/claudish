@@ -13,7 +13,7 @@ export const API_KEY_MAP: Record<string, { envVar: string; aliases?: string[] }>
   "kimi-coding": { envVar: "KIMI_CODING_API_KEY" },
   glm: { envVar: "ZHIPU_API_KEY", aliases: ["GLM_API_KEY"] },
   "glm-coding": { envVar: "GLM_CODING_API_KEY", aliases: ["ZAI_CODING_API_KEY"] },
-  zai: { envVar: "ZAI_API_KEY" },
+  "z-ai": { envVar: "ZAI_API_KEY" },
   ollamacloud: { envVar: "OLLAMA_API_KEY" },
   "opencode-zen": { envVar: "OPENCODE_API_KEY" },
   "opencode-zen-go": { envVar: "OPENCODE_API_KEY" },

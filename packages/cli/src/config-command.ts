@@ -99,10 +99,10 @@ const PROVIDERS: ProviderDef[] = [
     defaultEndpoint: "https://open.bigmodel.cn",
   },
   {
-    name: "zai",
+    name: "z-ai",
     displayName: "Z.AI",
     apiKeyEnvVar: "ZAI_API_KEY",
-    description: "Z.AI API (zai@)",
+    description: "Z.AI API (z-ai@)",
     keyUrl: "https://z.ai/",
     endpointEnvVar: "ZAI_BASE_URL",
     defaultEndpoint: "https://api.z.ai",

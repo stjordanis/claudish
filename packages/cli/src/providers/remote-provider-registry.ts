@@ -19,7 +19,7 @@
  * - kimi/, moonshot/ -> Kimi/Moonshot API (Anthropic-compatible)
  * - glm/, zhipu/ -> GLM/Zhipu API (OpenAI-compatible)
  * - gc/ -> GLM Coding Plan API (OpenAI-compatible)
- * - zai/ -> Z.AI API (Anthropic-compatible)
+ * - z-ai/ (legacy: zai/) -> Z.AI API (Anthropic-compatible)
  * - oc/ -> OllamaCloud API (OpenAI-compatible)
  * - zen/ -> OpenCode Zen API (OpenAI-compatible + Anthropic for MiniMax)
  * - or/, no prefix with "/" -> OpenRouter (existing handler)

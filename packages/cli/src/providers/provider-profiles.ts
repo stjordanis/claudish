@@ -357,8 +357,8 @@ export const PROVIDER_PROFILES: Record<string, ProviderProfile> = {
   // requests silently fell through to OpenRouter, which would only succeed
   // if the model name suffix-matched an OpenRouter ID. Recent xAI models
   // like grok-4.20-0309-reasoning didn't match → confusing 400 attributed
-  // to "xai" when xAI was never actually called.
-  xai: openaiProfile,
+  // to "x-ai" when xAI was never actually called.
+  "x-ai": openaiProfile,
   // Qwen API is OpenAI-compatible (DashScope).
   qwen: openaiProfile,
   // NOTE: poe uses transport: "poe" which has no profile factory yet —
@@ -369,7 +369,7 @@ export const PROVIDER_PROFILES: Record<string, ProviderProfile> = {
   "minimax-coding": anthropicCompatProfile,
   kimi: anthropicCompatProfile,
   "kimi-coding": anthropicCompatProfile,
-  zai: anthropicCompatProfile,
+  "z-ai": anthropicCompatProfile,
   glm: glmProfile,
   "glm-coding": glmProfile,
   "opencode-zen": openCodeZenProfile,
