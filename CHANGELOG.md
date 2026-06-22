@@ -4,23 +4,13 @@ All notable changes to [Claudish](https://github.com/MadAppGang/claudish).
 
 ## [7.6.0] - 2026-06-22
 
+### Documentation
+
+- update CHANGELOG.md for v7.5.0([`cd1a1a4`](https://github.com/MadAppGang/claudish/commit/cd1a1a44335381c49179455545aaa76b2dc00ed5))
+
 ### New Features
 
-- **Native 1Password integration** — resolve provider API keys from 1Password via `op://vault/item/field` secret references, no plaintext keys in config.
-  - `apiKeys` and a new top-level `onepassword` config array accept `op://` references (single) and globs (`op://Vault/Item/*/*_API_KEY`) that import many fields at once, using each field label as the env var name.
-  - `--op <glob>` flag — load API keys from a 1Password item glob, then run any command (`--op <glob> config`, `--op <glob> --model …`); `--op <glob> --list` previews field names without revealing values.
-  - `--op-env <id>` flag — load a 1Password Environment's variables.
-  - Custom-endpoint `apiKey` fields support `op://` references.
-- **SDK-based, in-process** via the official `@1password/sdk` (no `op inject`/CLI subprocess for secrets). One authorization prompt, batched resolution, structured errors.
-- **Multi-account auth** — service-account token (`OP_SERVICE_ACCOUNT_TOKEN`) or desktop app (`OP_ACCOUNT` / saved `onepasswordAccount` config). Interactive picker for multiple accounts saves your choice (global or per-project).
-
-### Bug Fixes
-
-- `.claudish.json` is no longer deleted when a profile/routing change leaves it "empty" — local config now preserves all settings (`onepasswordAccount`, `defaultProvider`, etc.) across read-modify-write cycles.
-
-### Notes
-
-- 1Password secret operations use the SDK (not an `op signin` CLI session). An `op signin`-only setup must now set `OP_ACCOUNT` (desktop) or `OP_SERVICE_ACCOUNT_TOKEN` (headless). The only remaining `op` binary call is an optional, read-only `op account list` for the multi-account picker.
+- v7.6.0 — native 1Password integration (SDK-based)([`20686fb`](https://github.com/MadAppGang/claudish/commit/20686fbe061f554dcf29efc0e6c4cc7256403401))
 
 ## [7.5.0] - 2026-06-10
 
