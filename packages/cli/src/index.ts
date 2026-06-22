@@ -4,17 +4,325 @@
 import { config } from "dotenv";
 config({ quiet: true }); // Loads .env from current working directory
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import type { AccountInfo, SdkAuth } from "./providers/onepassword.js";
+
+/**
+ * Raw-read `onepasswordAccount` from the global config (~/.claudish/config.json)
+ * and, when present, the local `.claudish.json` override (local wins). Uses raw
+ * fs reads (no profile-config.ts import) to stay dependency-light on the hot
+ * path. Returns undefined when neither file sets it.
+ */
+function readConfiguredOnepasswordAccount(): string | undefined {
+  // Local override first (project .claudish.json walking up isn't done here to
+  // stay dependency-light — we only check cwd, matching the early-hydration
+  // raw-read pattern; full walk-up resolution lives in profile-config.ts).
+  for (const path of [
+    join(process.cwd(), ".claudish.json"),
+    join(homedir(), ".claudish", "config.json"),
+  ]) {
+    try {
+      if (!existsSync(path)) continue;
+      const cfg = JSON.parse(readFileSync(path, "utf-8")) as { onepasswordAccount?: unknown };
+      if (typeof cfg.onepasswordAccount === "string" && cfg.onepasswordAccount.trim()) {
+        return cfg.onepasswordAccount.trim();
+      }
+    } catch {
+      // Ignore unreadable/garbled config — fall through to the next source.
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Persist a picked 1Password account URL as `onepasswordAccount`, at the chosen
+ * scope:
+ *  - "global"  → ~/.claudish/config.json (used across all projects).
+ *  - "project" → ./.claudish.json (this project only; overrides global on read).
+ * Best-effort: a save failure only means the user gets prompted again next time.
+ */
+async function saveOnepasswordAccount(
+  accountUrl: string,
+  scope: "global" | "project"
+): Promise<void> {
+  try {
+    if (scope === "project") {
+      // Raw read-modify-write of ./.claudish.json. We do NOT route through
+      // saveLocalConfig(): it unlinks files with "no meaningful state" (no
+      // profiles/routing), which would silently drop an account-only config,
+      // and loadLocalConfig() reconstructs only version/profile/routing —
+      // stripping other keys. A raw merge preserves everything.
+      const path = join(process.cwd(), ".claudish.json");
+      let existing: Record<string, unknown> = {};
+      if (existsSync(path)) {
+        try {
+          existing = JSON.parse(readFileSync(path, "utf-8")) as Record<string, unknown>;
+        } catch {
+          existing = {}; // garbled file → start fresh rather than crash
+        }
+      }
+      existing.onepasswordAccount = accountUrl;
+      writeFileSync(path, `${JSON.stringify(existing, null, 2)}\n`, "utf-8");
+    } else {
+      const { loadConfig, saveConfig } = await import("./profile-config.js");
+      const cfg = loadConfig();
+      cfg.onepasswordAccount = accountUrl;
+      saveConfig(cfg);
+    }
+  } catch {
+    // Non-fatal — the account is still used for THIS run via the returned auth.
+  }
+}
+
+/**
+ * Ask whether to save the picked account globally or for this project only.
+ * Returns "global" (default on empty/abort) or "project". TTY-gated by the
+ * caller (only reached inside the interactive picker).
+ */
+async function pickSaveScope(): Promise<"global" | "project"> {
+  const { createInterface } = await import("node:readline");
+  process.stderr.write(
+    "\n[claudish] Remember this account for:\n" +
+      "  1) all projects (global ~/.claudish/config.json)  [default]\n" +
+      "  2) this project only (./.claudish.json)\n"
+  );
+  const answer = await new Promise<string>((resolve) => {
+    const rl = createInterface({ input: process.stdin, output: process.stderr });
+    rl.question("Scope [1-2]: ", (ans) => {
+      rl.close();
+      resolve(ans.trim());
+    });
+  });
+  return answer === "2" ? "project" : "global";
+}
+
+/**
+ * Interactive multi-account picker. Prints the accounts to stderr and reads the
+ * user's choice from stdin (readline). Returns the chosen account URL, or
+ * undefined if the user aborts. Only invoked when stdout is a TTY.
+ */
+async function pickOnepasswordAccount(accounts: AccountInfo[]): Promise<string | undefined> {
+  const { createInterface } = await import("node:readline");
+  process.stderr.write("\n[claudish] Multiple 1Password accounts found. Choose one:\n");
+  accounts.forEach((a, i) => {
+    process.stderr.write(`  ${i + 1}) ${a.url}${a.email ? `  (${a.email})` : ""}\n`);
+  });
+  const answer = await new Promise<string>((resolve) => {
+    const rl = createInterface({ input: process.stdin, output: process.stderr });
+    rl.question(`Account [1-${accounts.length}]: `, (ans) => {
+      rl.close();
+      resolve(ans.trim());
+    });
+  });
+  const idx = Number.parseInt(answer, 10);
+  if (Number.isNaN(idx) || idx < 1 || idx > accounts.length) {
+    process.stderr.write("[claudish] No valid selection — aborting 1Password account picker.\n");
+    return undefined;
+  }
+  return accounts[idx - 1].url;
+}
+
+/**
+ * Memoized SDK auth resolver shared across all early-hydration 1Password paths
+ * (--op-env, --op, config apiKeys/onepassword[], custom-endpoint op:// keys).
+ * Resolving once means a multi-account user is prompted AT MOST once per run,
+ * and the picked account is saved to global config.
+ *
+ * Returns the resolved SdkAuth, or undefined when NO auth could be resolved AND
+ * there's nothing to prompt (the individual callers still hard-fail at the
+ * point of use via acquireSdkClient if they actually need a secret). We resolve
+ * lazily: this is only ever called when at least one op:// source is present.
+ */
+let cachedSdkAuth: SdkAuth | undefined;
+let sdkAuthResolved = false;
+async function getSdkAuth(): Promise<SdkAuth | undefined> {
+  if (sdkAuthResolved) return cachedSdkAuth;
+  sdkAuthResolved = true;
+  const { resolveSdkAuth } = await import("./providers/onepassword.js");
+  const interactive = Boolean(process.stdout.isTTY) && !process.argv.includes("--stdin");
+  try {
+    cachedSdkAuth = await resolveSdkAuth({
+      configAccount: readConfiguredOnepasswordAccount(),
+      interactive,
+      onNeedsPicker: async (accounts) => {
+        const chosen = await pickOnepasswordAccount(accounts);
+        if (chosen) {
+          const scope = await pickSaveScope();
+          await saveOnepasswordAccount(chosen, scope);
+        }
+        return chosen;
+      },
+    });
+  } catch (err) {
+    // No usable auth. Surface the actionable message and hard-fail — every
+    // caller of getSdkAuth() only runs because an op:// source is present, so
+    // there's no "skip silently" path.
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[claudish] 1Password authentication failed: ${message}`);
+    process.exit(1);
+  }
+  return cachedSdkAuth;
+}
+
+/**
+ * Highest-priority source: a 1Password Environment loaded via `--op-env <id>`.
+ * Values OVERWRITE anything already in process.env (and, being applied before
+ * loadStoredApiKeys, also beat config). Runs only when the flag is present, so
+ * non-users never touch the `op` binary OR the 1Password SDK.
+ *
+ * Async because the SDK resolver is async. On any failure (including no SDK
+ * auth) this hard-fails (exit 1) — `--op-env` is explicit opt-in.
+ */
+async function applyOpEnvironment(): Promise<void> {
+  const argv = process.argv.slice(2);
+  let envId: string | undefined;
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--op-env") {
+      envId = argv[i + 1];
+      break;
+    }
+    if (a.startsWith("--op-env=")) {
+      envId = a.slice("--op-env=".length);
+      break;
+    }
+  }
+  // Flag not present → zero cost, never invoke `op` or import the SDK.
+  if (envId === undefined) return;
+  if (envId === "" || envId.startsWith("-")) {
+    console.error("[claudish] --op-env requires a 1Password Environment ID");
+    process.exit(1);
+  }
+  try {
+    // Dynamic import: only pull in the onepassword resolution path (and the SDK)
+    // when --op-env is actually present.
+    const { readEnvironment } = await import("./providers/onepassword.js");
+    const auth = await getSdkAuth();
+    const vars = await readEnvironment(envId, { auth });
+    for (const [key, value] of Object.entries(vars)) {
+      // --op-env is the highest-priority source: overwrite unconditionally.
+      process.env[key] = value;
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[claudish] 1Password Environment load failed: ${message}`);
+    process.exit(1);
+  }
+}
+
+/**
+ * Inline 1Password glob import via the `--op <glob>` early-hydration flag.
+ * Mirrors `applyOpEnvironment()`: scans argv BEFORE the subcommand router runs,
+ * resolves the glob, and hydrates process.env so `--op` composes with EVERY
+ * downstream path (config TUI, serve, a model run, plain interactive) with zero
+ * special handoff.
+ *
+ * Two modes, selected by a bare `--list` token in the same argv:
+ *  - `--op <glob> --list`  → PREVIEW: print the field-name table (no values),
+ *    then exit 0. Terminal — never continues to a session or dispatch.
+ *  - `--op <glob>`         → hydrate env vars (OVERWRITE — explicit inline
+ *    request, like --op-env), then RETURN so execution falls through to the
+ *    normal dispatch.
+ *
+ * After consuming, the `--op`, its glob value, and any `--list` token are
+ * REMOVED from process.argv so the downstream router + parseArgs never see them
+ * (critically, so the glob value isn't mistaken for the first positional arg).
+ *
+ * Runs only when `--op` is present, so non-users never import onepassword/SDK.
+ * Hard-fails (exit 1) on any resolution/preview failure — `--op` is explicit
+ * opt-in.
+ */
+async function applyOpImport(): Promise<void> {
+  const argv = process.argv.slice(2);
+  const { parseOpFlag } = await import("./providers/onepassword.js");
+  const parsed = parseOpFlag(argv);
+
+  // Flag not present → zero cost, never invoke `op` or import the SDK/command.
+  if (!parsed.present) return;
+
+  if (parsed.glob === undefined) {
+    console.error("[claudish] --op requires an op:// glob path");
+    process.exit(1);
+  }
+  const glob = parsed.glob;
+
+  if (parsed.list) {
+    // PREVIEW — names only, terminal. Never resolves secret values, never
+    // continues to dispatch.
+    try {
+      const { opPreviewCommand } = await import("./onepassword-command.js");
+      const auth = await getSdkAuth();
+      await opPreviewCommand(glob, { auth });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`[claudish] 1Password --op preview failed: ${message}`);
+      process.exit(1);
+    }
+    process.exit(0);
+  }
+
+  // HYDRATE — resolve the glob and OVERWRITE each {envVar: value} into the
+  // process env (explicit inline request, same as --op-env). Then strip the flag
+  // tokens from process.argv and fall through to the normal dispatch.
+  try {
+    const { resolveGlobImport } = await import("./providers/onepassword.js");
+    const auth = await getSdkAuth();
+    const resolved = await resolveGlobImport(glob, { auth });
+    for (const [key, value] of Object.entries(resolved)) {
+      process.env[key] = value;
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[claudish] 1Password --op import failed: ${message}`);
+    process.exit(1);
+  }
+
+  // Remove the consumed flag tokens so downstream firstPositional detection /
+  // parseArgs never see them. We drop: `--op` + its glob value, OR `--op=<glob>`.
+  // (No `--list` here — list mode already exited above.)
+  const head = process.argv.slice(0, 2);
+  const rebuilt: string[] = [];
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--op") {
+      // Skip `--op` and its following value (the glob).
+      i++;
+      continue;
+    }
+    if (a.startsWith("--op=")) {
+      continue; // inline form — single token
+    }
+    rebuilt.push(a);
+  }
+  process.argv = [...head, ...rebuilt];
+}
 
 /**
  * Load API keys and custom endpoints from ~/.claudish/config.json into process.env.
  * Environment variables already set take precedence over stored values.
  * Uses raw fs reads (no profile-config.ts import) to avoid loading heavy dependencies
  * on every CLI invocation.
+ *
+ * Two 1Password sources are honored:
+ *  - `cfg.apiKeys` / `cfg.endpoints` — a `{ NAME: value }` map. A single op://
+ *    ref VALUE resolves under its explicit NAME (the original behavior). Glob
+ *    VALUES in apiKeys are NO LONGER specially detected.
+ *  - `cfg.onepassword` — a dedicated `string[]` of glob OR single op:// ref
+ *    entries. Globs expand to MANY env vars (named by field label); single refs
+ *    are named by their trailing field label. This replaces the old magic
+ *    placeholder-key-in-apiKeys glob convention.
+ *
+ * Resolution is explicit opt-in (an op:// ref/glob is present), so a failure
+ * hard-fails (exit 1).
  */
-function loadStoredApiKeys(): void {
+async function loadStoredApiKeys(): Promise<void> {
+  let opRefs: Record<string, string> = {};
+  let globImports: string[] = [];
+  // Mirror the apiKeys/endpoints gap-fill into process.env BEFORE collecting,
+  // so single op:// refs sitting in config seed process.env exactly as before.
+  let apiKeysForSeed: Record<string, string> | undefined;
   try {
     const configPath = join(homedir(), ".claudish", "config.json");
     if (!existsSync(configPath)) return;
@@ -22,27 +330,149 @@ function loadStoredApiKeys(): void {
     const cfg = JSON.parse(raw) as {
       apiKeys?: Record<string, string>;
       endpoints?: Record<string, string>;
+      onepassword?: string[];
     };
-    if (cfg.apiKeys) {
-      for (const [envVar, value] of Object.entries(cfg.apiKeys)) {
-        if (!process.env[envVar] && typeof value === "string") {
+
+    // Gap-fill apiKeys + endpoints into process.env (env already set wins).
+    const seedSources = [cfg.apiKeys, cfg.endpoints];
+    const mergedApiKeys: Record<string, string> = {};
+    for (const source of seedSources) {
+      if (!source) continue;
+      for (const [envVar, value] of Object.entries(source)) {
+        if (typeof value !== "string") continue;
+        if (!process.env[envVar]) {
           process.env[envVar] = value;
         }
+        mergedApiKeys[envVar] = value;
       }
     }
-    if (cfg.endpoints) {
-      for (const [envVar, value] of Object.entries(cfg.endpoints)) {
-        if (!process.env[envVar] && typeof value === "string") {
-          process.env[envVar] = value;
-        }
-      }
-    }
+    apiKeysForSeed = mergedApiKeys;
+
+    // collectConfigImports is pure — it reads the (now-seeded) process.env to
+    // honor "don't resolve a real already-set env var that differs from config".
+    const { collectConfigImports } = await import("./providers/onepassword.js");
+    const collected = collectConfigImports(
+      { apiKeys: apiKeysForSeed, onepassword: cfg.onepassword },
+      process.env
+    );
+    opRefs = collected.opRefs;
+    globImports = collected.globImports;
+    for (const w of collected.warnings) console.error(w);
   } catch {
-    // Silently ignore config load failures
+    // Silently ignore config load/parse failures (missing/garbled config.json).
+  }
+
+  // Nothing to resolve → zero cost, no SDK/op import.
+  const refKeys = Object.keys(opRefs);
+  if (refKeys.length === 0 && globImports.length === 0) return;
+
+  try {
+    // Dynamic import: only load the resolution path (and the SDK) when an
+    // op:// reference OR glob import is actually present.
+    const { resolveSecrets, resolveGlobImport } = await import(
+      "./providers/onepassword.js"
+    );
+    const auth = await getSdkAuth();
+
+    // Single op:// refs: batched, in one resolveAll call.
+    if (refKeys.length > 0) {
+      const resolved = await resolveSecrets(opRefs, { auth });
+      for (const [envVar, value] of Object.entries(resolved)) {
+        process.env[envVar] = value;
+      }
+    }
+
+    // Glob imports: each expands to MANY env vars (named by field label).
+    // Explicit/shell env wins — never overwrite an already-set var.
+    for (const globPath of globImports) {
+      const resolved = await resolveGlobImport(globPath, { auth });
+      for (const [envVar, value] of Object.entries(resolved)) {
+        if (!process.env[envVar]) {
+          process.env[envVar] = value;
+        }
+      }
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(
+      `[claudish] 1Password secret resolution failed: ${message}`
+    );
+    process.exit(1);
   }
 }
 
-loadStoredApiKeys();
+/**
+ * Pre-resolve custom-endpoint `op://` apiKeys into `CUSTOM_<NAME>_KEY` env vars
+ * so the SYNCHRONOUS provider-construction path (custom-endpoints-loader's
+ * createHandler) can read the resolved value without awaiting the async SDK.
+ *
+ * Raw-reads `customEndpoints` from ~/.claudish/config.json (dependency-light,
+ * mirrors loadStoredApiKeys). For each endpoint whose `apiKey` is an op:// ref,
+ * collects `{ CUSTOM_<sanitize(name)>_KEY: "op://..." }` and resolves the batch
+ * via the SDK. The sanitize rule matches custom-endpoints-loader's
+ * sanitizeEnvName (UPPERCASE, non-alphanumerics → `_`). An already-set
+ * CUSTOM_<NAME>_KEY (shell/env) wins and is skipped.
+ *
+ * Zero-cost when no custom endpoint uses an op:// key. Hard-fails (exit 1) on a
+ * resolution error — an op:// apiKey is explicit opt-in.
+ */
+async function applyCustomEndpointOpKeys(): Promise<void> {
+  let refs: Record<string, string> = {};
+  try {
+    const configPath = join(homedir(), ".claudish", "config.json");
+    if (!existsSync(configPath)) return;
+    const cfg = JSON.parse(readFileSync(configPath, "utf-8")) as {
+      customEndpoints?: Record<string, unknown>;
+    };
+    const endpoints = cfg.customEndpoints;
+    if (!endpoints || typeof endpoints !== "object") return;
+
+    const { isOpReference } = await import("./providers/onepassword.js");
+    for (const [name, raw] of Object.entries(endpoints)) {
+      if (!raw || typeof raw !== "object") continue;
+      const apiKey = (raw as { apiKey?: unknown }).apiKey;
+      if (typeof apiKey !== "string" || !isOpReference(apiKey)) continue;
+      const envVar = `CUSTOM_${name.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_KEY`;
+      // Shell/env value already present → don't overwrite, don't resolve.
+      if (process.env[envVar]) continue;
+      refs[envVar] = apiKey;
+    }
+  } catch {
+    // Unreadable/garbled config → nothing to resolve.
+    refs = {};
+  }
+
+  if (Object.keys(refs).length === 0) return;
+
+  try {
+    const { resolveSecrets } = await import("./providers/onepassword.js");
+    const auth = await getSdkAuth();
+    const resolved = await resolveSecrets(refs, { auth });
+    for (const [envVar, value] of Object.entries(resolved)) {
+      process.env[envVar] = value;
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[claudish] 1Password custom-endpoint key resolution failed: ${message}`);
+    process.exit(1);
+  }
+}
+
+// Early-hydration sequence (all async — the SDK is async). Both explicit flags
+// beat config; config only fills remaining gaps:
+//   1. --op-env <id>           — highest priority, overwrites unconditionally.
+//   2. --op <glob>             — explicit inline import, also overwrites; in
+//      --list mode it previews and exits before any dispatch.
+//   3. config.json apiKeys/onepassword[] — gap-fill (never overwrites a set var).
+//   4. customEndpoints op:// apiKeys     — pre-resolved into CUSTOM_<NAME>_KEY.
+// Run to completion BEFORE the subcommand dispatch so process.env is fully
+// hydrated. When none of these flags/refs are present, each returns immediately
+// without importing the 1Password SDK. SDK auth is resolved AT MOST once and
+// shared across all four (getSdkAuth memoization).
+await applyOpEnvironment();
+await applyOpImport();
+await loadStoredApiKeys();
+await applyCustomEndpointOpKeys();
 
 // Check for MCP mode before loading heavy dependencies
 const isMcpMode = process.argv.includes("--mcp");

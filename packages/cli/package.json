@@ -1,6 +1,6 @@
 {
   "name": "claudish",
-  "version": "7.5.0",
+  "version": "7.6.0",
   "description": "Run Claude Code with any model - OpenRouter, Ollama, LM Studio & local models",
   "type": "module",
   "main": "./dist/index.js",
@@ -22,6 +22,7 @@
     "smoke": "bun run scripts/smoke-test.ts"
   },
   "dependencies": {
+    "@1password/sdk": "0.4.1-beta.1",
     "@inquirer/prompts": "^8.0.1",
     "@inquirer/search": "^4.0.1",
     "@modelcontextprotocol/sdk": "^1.27.0",

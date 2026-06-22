@@ -33,6 +33,15 @@ export interface ClaudishConfig {
   profile?: string; // Profile name to use for model mapping
   /** --default-provider <name> CLI flag (Phase 1 of LiteLLM-demotion refactor) */
   defaultProvider?: string;
+  /** --op-env <id>: load vars from a 1Password Environment (highest priority). Requires op CLI ≥ 2.35 beta. */
+  opEnv?: string;
+  /**
+   * --op <glob>: 1Password item glob import. Consumed (and stripped from argv)
+   * by index.ts's applyOpImport() BEFORE parseArgs runs, so this is normally
+   * undefined here. parseArgs keeps a defensive branch that consumes it (so a
+   * stray --op never leaks to Claude Code as a passthrough arg).
+   */
+  opImport?: string;
   /** Resolved default provider (computed via resolveDefaultProvider() after argv parsing) */
   resolvedDefaultProvider?: import("./default-provider.js").ResolvedDefaultProvider;
   claudeArgs: string[];

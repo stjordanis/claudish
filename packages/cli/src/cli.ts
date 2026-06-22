@@ -342,6 +342,32 @@ export async function parseArgs(args: string[]): Promise<ClaudishConfig> {
         process.exit(1);
       }
       config.defaultProvider = dpArg;
+    } else if (arg === "--op-env" || arg.startsWith("--op-env=")) {
+      // The actual 1Password Environment read happens early in index.ts
+      // (highest priority). Here we only consume the flag + its value so it
+      // isn't forwarded to Claude Code as a passthrough arg. Both forms
+      // (`--op-env <id>` and `--op-env=<id>`) are accepted, matching index.ts.
+      const v = arg.startsWith("--op-env=") ? arg.slice("--op-env=".length) : args[++i];
+      if (!v) {
+        console.error("--op-env requires a 1Password Environment ID");
+        process.exit(1);
+      }
+      config.opEnv = v;
+    } else if (arg === "--op" || arg.startsWith("--op=")) {
+      // The actual 1Password glob import happens early in index.ts
+      // (applyOpImport), which strips --op from process.argv before parseArgs
+      // runs. This defensive branch only fires if --op somehow reaches parseArgs
+      // (e.g. a future code path that doesn't go through applyOpImport): consume
+      // the flag + its value so it isn't forwarded to Claude Code as a
+      // passthrough arg. Both forms (`--op <glob>` and `--op=<glob>`) accepted,
+      // matching index.ts. NOTE: `--op-env` is handled above and `=== "--op"`
+      // won't match it, so there's no startsWith collision here.
+      const v = arg.startsWith("--op=") ? arg.slice("--op=".length) : args[++i];
+      if (!v) {
+        console.error("--op requires an op:// glob path");
+        process.exit(1);
+      }
+      config.opImport = v;
     } else if (arg === "--cost-tracker") {
       // Enable cost tracking for this session
       config.costTracking = true;
@@ -1870,6 +1896,10 @@ OPTIONS:
   -p, --profile <name>     Use named profile for model mapping (default: uses default profile)
   --default-provider <name> Default provider for bare model names (builtin or customEndpoints key)
                            Precedence: this flag > CLAUDISH_DEFAULT_PROVIDER env > config.json
+  --op-env <id>            Load env vars from a 1Password Environment (highest priority)
+                           Requires op CLI >= 2.35 (beta). Resolves op:// refs in config/env too.
+  --op <glob>              Load API keys from a 1Password item glob (e.g. op://Vault/Item/*/*_API_KEY)
+  --op <glob> --list       Preview which fields the glob would import (names only, no values)
   --port <port>            Proxy server port (default: random)
   -d, --debug              Enable debug logging to file (logs/claudish_*.log)
   --no-logs                Disable always-on structural logging (~/.claudish/logs/)
@@ -1951,6 +1981,12 @@ AUTHENTICATION:
   claudish login [provider]   Login to an OAuth provider (interactive if no provider given)
   claudish logout [provider]  Clear OAuth credentials (interactive if no provider given)
                               Providers: gemini, kimi
+
+1PASSWORD:
+  claudish op --list <op://glob>           Preview which fields a glob imports (names only)
+  claudish op <op://glob> [...claudish args]  Resolve glob into env vars, then run a session
+                                           Inline run requires a GLOB (self-names via field labels)
+                                           Example: claudish op 'op://Jack/Keys/*/*_API_KEY' --model gpt-4o "task"
 
 MODEL MAPPING (per-role override):
   --model-opus <model>     Model for Opus role (planning, complex tasks)

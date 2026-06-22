@@ -9,7 +9,7 @@
  * Resolution order: local config takes priority over global config.
  */
 
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, parse } from "node:path";
 
@@ -121,6 +121,21 @@ export interface ClaudishProfileConfig {
   apiKeys?: Record<string, string>;
   /** Custom provider endpoints (env var name → URL) */
   endpoints?: Record<string, string>;
+  /**
+   * 1Password imports. Each entry is a glob (`op://.../*` or
+   * `op://.../<section>/<fieldGlob>`) that expands to MANY env vars named by
+   * field label, OR a single `op://vault/item/[section]/field` reference named
+   * by its trailing field label. Resolved at startup (explicit opt-in → a
+   * failure hard-fails). Env vars already set always win.
+   */
+  onepassword?: string[];
+  /**
+   * The 1Password account URL (e.g. `my-team.1password.com`) to use for SDK
+   * DesktopAuth when no OP_SERVICE_ACCOUNT_TOKEN / OP_ACCOUNT is set. Saved by
+   * the interactive multi-account picker, or set manually. Resolves below
+   * OP_ACCOUNT (env) but above auto-detection.
+   */
+  onepasswordAccount?: string;
   /** Built-in local providers explicitly enabled in global config. */
   localProviders?: string[];
   /** ISO timestamp when user confirmed auto-approve behavior. Absent = never confirmed. */
@@ -212,6 +227,12 @@ export function loadConfig(): ClaudishProfileConfig {
     }
     if (config.endpoints !== undefined) {
       merged.endpoints = config.endpoints;
+    }
+    if (config.onepassword !== undefined) {
+      merged.onepassword = config.onepassword;
+    }
+    if (config.onepasswordAccount !== undefined) {
+      merged.onepasswordAccount = config.onepasswordAccount;
     }
     if (config.localProviders !== undefined) {
       merged.localProviders = Array.from(new Set(config.localProviders)).sort();
@@ -325,16 +346,17 @@ export function loadLocalConfig(): ClaudishProfileConfig | null {
     const content = readFileSync(localPath, "utf-8");
     const config = JSON.parse(content) as ClaudishProfileConfig;
 
-    const local: ClaudishProfileConfig = {
+    // Preserve ALL keys present in the file. A read-modify-write cycle
+    // (loadLocalConfig → mutate one field → saveLocalConfig) must never drop
+    // other settings the user has in `.claudish.json` (e.g. onepasswordAccount,
+    // defaultProvider, diagMode). We only backfill the structural fields that
+    // downstream code assumes are always present.
+    return {
+      ...config,
       version: config.version || DEFAULT_CONFIG.version,
-      defaultProfile: config.defaultProfile || "",
-      profiles: config.profiles || {},
+      defaultProfile: config.defaultProfile ?? "",
+      profiles: config.profiles ?? {},
     };
-    // Preserve custom routing rules if present
-    if (config.routing !== undefined) {
-      local.routing = config.routing;
-    }
-    return local;
   } catch (error) {
     console.error(`Warning: Failed to load local config: ${error}`);
     return null;
@@ -348,29 +370,19 @@ export function loadLocalConfig(): ClaudishProfileConfig | null {
  * (no profiles, no routing), the file is unlinked instead of written.
  */
 export function saveLocalConfig(config: ClaudishProfileConfig): void {
-  // Drop empty routing object so the on-disk file stays clean.
+  // Drop an EMPTY routing object so the on-disk file stays tidy (an empty
+  // `{"routing": {}}` carries no rules). This is cosmetic, not data loss.
   const toWrite: ClaudishProfileConfig = { ...config };
   if (toWrite.routing !== undefined && Object.keys(toWrite.routing).length === 0) {
     delete toWrite.routing;
   }
-  const profileCount = Object.keys(toWrite.profiles ?? {}).length;
-  const routingCount = toWrite.routing ? Object.keys(toWrite.routing).length : 0;
 
-  const path = getLocalConfigPath();
-  if (profileCount === 0 && routingCount === 0) {
-    // Nothing meaningful left — remove the file if it exists.
-    if (existsSync(path)) {
-      try {
-        unlinkSync(path);
-      } catch {
-        // Best-effort: if unlink fails (read-only fs etc.), fall through to
-        // a write of the empty-but-valid shell so the file isn't corrupt.
-        writeFileSync(path, JSON.stringify(toWrite, null, 2), "utf-8");
-      }
-    }
-    return;
-  }
-  writeFileSync(path, JSON.stringify(toWrite, null, 2), "utf-8");
+  // Always write what we're given. We deliberately do NOT delete the file when
+  // profiles/routing are empty: `.claudish.json` may legitimately hold other
+  // settings (onepasswordAccount, defaultProvider, diagMode, …). Deleting it on
+  // a profile/routing change would silently wipe those — destructive. Mirror
+  // the global saveConfig(): persist the config as-is.
+  writeFileSync(getLocalConfigPath(), JSON.stringify(toWrite, null, 2), "utf-8");
 }
 
 // ─── Scope-Aware Operations ─────────────────────────────

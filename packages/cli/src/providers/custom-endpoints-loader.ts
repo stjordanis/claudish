@@ -136,7 +136,12 @@ function buildProviderDefinition(
 function buildProviderProfile(ep: CustomEndpoint): ProviderProfile {
   return {
     createHandler(ctx: ProfileContext): ModelHandler | null {
-      const apiKey = resolveCustomEndpointApiKey(ep);
+      // Env-first: an op:// apiKey is pre-resolved at startup
+      // (index.ts applyCustomEndpointOpKeys) into CUSTOM_<NAME>_KEY, so we read
+      // that first and only fall back to the literal/${VAR} resolver. This keeps
+      // handler construction synchronous (no SDK await on the hot path).
+      const apiKey =
+        process.env[ctx.provider.apiKeyEnvVar] || resolveCustomEndpointApiKey(ep);
       if (ep.kind === "simple") {
         return buildSimpleHandler(ep, ctx, apiKey);
       }
@@ -258,16 +263,27 @@ function buildComplexHandler(
 
 /**
  * Resolve a custom endpoint's API key, expanding ${VAR_NAME} env var references.
- * Returns the literal apiKey if not a template, or empty string if the env var
- * is unset.
+ *
+ * Resolution order:
+ *  1. `${VAR_NAME}` → process.env[VAR_NAME] (empty string if unset).
+ *  2. Anything else → returned as-is (a literal key).
+ *
+ * NOTE: `op://...` apiKeys are NOT resolved here. They are pre-resolved at
+ * startup (index.ts `applyCustomEndpointOpKeys()`) via the SDK into the
+ * `CUSTOM_<NAME>_KEY` env var, which `createHandler` reads FIRST. This keeps
+ * this function synchronous (handler construction can't await the async SDK).
+ * A bare `op://...` literal that reaches here (no pre-resolved env value) is
+ * returned verbatim — which the upstream provider will reject as an invalid key.
  *
  * Exported for unit testing.
  */
 export function resolveCustomEndpointApiKey(ep: CustomEndpoint): string {
   const literal = ep.apiKey;
   const match = literal.match(/^\$\{([A-Z_][A-Z0-9_]*)\}$/i);
-  if (!match) return literal;
-  return process.env[match[1]] ?? "";
+  if (match) {
+    return process.env[match[1]] ?? "";
+  }
+  return literal;
 }
 
 function stripTrailingSlash(url: string): string {

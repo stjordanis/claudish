@@ -278,6 +278,7 @@ claudish [OPTIONS] <claude-args...>
 | `--model-haiku <model>` | | Model for Haiku role (fast tasks) | |
 | `--model-subagent <model>` | | Model for sub-agents (Task tool) | |
 | `--profile <name>` | `-p` | Named profile for model mapping | Default profile |
+| `--op-env <id>` | | Load env vars from a 1Password Environment (highest priority) | |
 | `--interactive` | `-i` | Interactive mode (persistent session) | Auto when no prompt |
 | `--auto-approve` | `-y` | Skip permission prompts | `false` |
 | `--no-auto-approve` | | Explicitly enable permission prompts | |
@@ -439,6 +440,96 @@ claudish profile edit <name>                # Edit profile
 ```
 
 For the complete configuration reference, see [Settings Reference](docs/settings-reference.md).
+
+## 1Password Integration
+
+Resolve provider API keys from 1Password instead of storing them in plaintext. Claudish reads [secret references](https://developer.1password.com/docs/cli/secret-references/) (`op://vault/item/field`) and resolves them at startup — the secret never lives in your config or shell history.
+
+**Authentication** is automatic, in this order:
+
+1. **`OP_SERVICE_ACCOUNT_TOKEN`** — a [service-account token](https://developer.1password.com/docs/service-accounts/) for headless/CI use (resolved via the official 1Password SDK, in-process, no `op` CLI needed). Service accounts can only read **shared** vaults, not your Private vault.
+2. **`op` CLI session** — if you're signed into the 1Password desktop app (`op signin`), claudish uses that session (interactive, Touch ID). This is the zero-setup path on a laptop.
+
+If a config value or env var starts with `op://` and neither auth method works, claudish **fails with a clear message** rather than running with a missing key. If no `op://` reference is present, claudish never touches 1Password (zero overhead for non-users).
+
+> **About the authorization prompt:** When claudish reads a secret via the `op` CLI session, the 1Password desktop app shows an authorization prompt. By design, 1Password labels that prompt with the **requesting process** — i.e. your terminal (`tmux`, `iTerm`, etc.) — not "claudish". This is a 1Password behavior that no app can override; the prompt always names the process, never the integration. claudish *is* identified as `claudish` in 1Password's **activity/audit log**, just not in the live prompt. To avoid the prompt entirely (e.g. CI, or if the terminal name bothers you), use a `OP_SERVICE_ACCOUNT_TOKEN` — the service-account path authenticates directly against the 1Password API with **no desktop prompt at all**.
+
+### Single references
+
+Point any API key at a 1Password field:
+
+```json
+{
+  "apiKeys": {
+    "OPENROUTER_API_KEY": "op://Shared/OpenRouter/credential",
+    "OPENAI_API_KEY": "op://Shared/OpenAI/api-key"
+  }
+}
+```
+
+A `${VAR}` in a custom-endpoint `apiKey` and an `op://...` value are both resolved the same way. Multiple references are resolved in a single batch (one auth prompt).
+
+### Glob import — many keys from one item
+
+If you keep all your provider keys in one 1Password item (each field named after its env var, e.g. `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`), import them all with one entry. Add a top-level `onepassword` array of glob paths:
+
+```json
+{
+  "onepassword": [
+    "op://Jack/AI LLM keys/*/*_API_KEY"
+  ]
+}
+```
+
+The glob position mirrors the `op://` path structure:
+
+| Pattern | Imports |
+|---------|---------|
+| `op://Vault/Item/*` | all **top-level** (sectionless) fields |
+| `op://Vault/Item/*_API_KEY` | top-level fields ending in `_API_KEY` |
+| `op://Vault/Item/Section/*` | all fields in `Section` |
+| `op://Vault/Item/*/*_API_KEY` | `*_API_KEY` fields across **all** sections |
+| `op://Vault/Item/M*/*` | all fields in sections starting with `M` |
+
+Each matched **field label becomes the env var name** (trimmed of whitespace). Labels that aren't valid env var names (e.g. `Customer Key`) are skipped with a warning. Only matched fields are decrypted — claudish lists field names first, then fetches values only for the ones you import.
+
+Preview what a glob would import **without revealing any secret values**:
+
+```bash
+claudish op --list "op://Jack/AI LLM keys/*/*_API_KEY"
+#   OPENROUTER_API_KEY   ✓  (section: Open router)
+#   ANTHROPIC_API_KEY    ✓  (section: Claude)
+#   Customer Key         ✗  skipped (not a valid env var name)
+#   9 importable, 1 skipped
+```
+
+Or run a one-off session with keys loaded inline, no config needed:
+
+```bash
+claudish op "op://Jack/AI LLM keys/*/*_API_KEY" --model openrouter@deepseek/deepseek-r1 "task"
+```
+
+### Finding the path
+
+In the 1Password app, hover a field → its menu → **Copy Secret Reference** gives `op://Vault/Item/[Section/]Field`. For a glob, you only need the vault and item names (visible in the sidebar and title) plus `/*` — claudish discovers the fields. The `claudish op --list` preview confirms a glob before you commit it to config.
+
+### 1Password Environments
+
+[1Password Environments](https://www.1password.dev/environments) (named sets of env vars) load via `--op-env <id>`, where `<id>` is the Environment ID copied from the desktop app (Developer → View Environments → Manage environment → Copy environment ID):
+
+```bash
+claudish --op-env <environment-id> --model openrouter@... "task"
+```
+
+Environment values are the **highest-priority source** (they override config and shell env). Requires the `op` CLI **≥ 2.35 (beta)** — the latest stable `op` (2.34.0) does not yet include the `op environment` command.
+
+### Zero-code alternative
+
+You can also wrap claudish with `op run` (no config changes needed), using an env file of `op://` references:
+
+```bash
+op run --env-file=.env -- claudish --model openrouter@... "task"
+```
 
 ## Model Routing (v4.0.0+)
 
