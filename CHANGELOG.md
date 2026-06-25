@@ -2,6 +2,12 @@
 
 All notable changes to [Claudish](https://github.com/MadAppGang/claudish).
 
+## [7.7.1] - 2026-06-25
+
+### Bug Fixes
+
+- Fix `ENOENT ... core_bg.wasm` crash in the compiled/Homebrew binary when 1Password is used. `bun --compile` bundles the SDK's WASM loader but rewrites its `__dirname` to the build machine's path (e.g. `/home/runner/work/...`), which doesn't exist at runtime. The 1Password sdkLoader now provisions the WASM on demand: it intercepts the loader's `readFileSync` and, in a compiled binary with a cold cache, downloads the pinned `@1password/sdk-core` tarball from the official npm registry, verifies its SHA-512, extracts `core_bg.wasm`, and caches it under `~/.claudish/cache/1password/`. ~10MB, fetched at most once per machine; npm installs and warm caches do zero network I/O. A user who doesn't use 1Password never loads the SDK or WASM on any command (lazy-by-need).
+
 ## [7.7.0] - 2026-06-25
 
 ### New Features

@@ -776,6 +776,13 @@ export const defaultSdkClientFactory: SdkClientFactory = async (auth) => {
   if (cached) return cached;
 
   const build = (async () => {
+    // Ensure the SDK's core_bg.wasm is loadable BEFORE importing the SDK. In a
+    // compiled binary the bundled loader points at a stale build-machine path;
+    // this installs a readFileSync redirect (and, cold-cache, downloads the
+    // pinned WASM from the official npm registry). Zero network on npm installs
+    // and on warm caches. See providers/onepassword-wasm.ts.
+    const { ensureOpWasmAvailable } = await import("./onepassword-wasm.js");
+    await ensureOpWasmAvailable();
     const { createClient, DesktopAuth } = await import("@1password/sdk");
     const client = await createClient({
       auth: auth.kind === "token" ? auth.token : new DesktopAuth(auth.accountName),

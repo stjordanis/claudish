@@ -457,6 +457,15 @@ async function applyCustomEndpointOpKeys(): Promise<void> {
 // hydrated. When none of these flags/refs are present, each returns immediately
 // without importing the 1Password SDK. SDK auth is resolved AT MOST once and
 // shared across all four (getSdkAuth memoization).
+//
+// These four are LAZY BY NEED, not gated by command: each inspects its source
+// (the --op-env / --op flags, then config.json's op:// refs + glob imports, then
+// custom-endpoint op:// keys) and returns IMMEDIATELY when there is nothing to
+// resolve — without importing the 1Password SDK or its ~10MB WASM. So a user who
+// doesn't use 1Password pays nothing here on ANY command (help, version, a real
+// run). The SDK + WASM load happens only at the moment a key is actually
+// resolved, inside the sdkLoader (providers/onepassword.ts), which calls
+// ensureOpWasmAvailable() right before `import("@1password/sdk")`.
 await applyOpEnvironment();
 await applyOpImport();
 await loadStoredApiKeys();
