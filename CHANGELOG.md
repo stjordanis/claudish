@@ -6,13 +6,21 @@ All notable changes to [Claudish](https://github.com/MadAppGang/claudish).
 
 ### Bug Fixes
 
-- Only resolve config-driven 1Password secrets on the model-routing path. Previously every command — including `update`, `config`, `providers`, `init`, `telemetry`, `stats`, `login`/`logout` — ran the config `onepassword[]` glob imports + custom-endpoint key resolution at startup, which prompted a user with `op://` config for 1Password access even on `claudish update`. Resolution is now an allowlist: config-driven secrets hydrate ONLY for the paths that actually route a model and read a provider key from `process.env` (the CLI/proxy path, the MCP server, and `serve`). Management subcommands never touch 1Password (no auth prompt, no SDK, no WASM, no glob expansion). Explicit `--op` / `--op-env` flags still resolve wherever they appear, and a user with no 1Password config is unaffected.
+- v7.7.3 — resolve config 1Password secrets only on the model-routing path([`39e8f4d`](https://github.com/MadAppGang/claudish/commit/39e8f4d48ac21239fff6a9ace99de78792b370d9))
+
+### Documentation
+
+- update CHANGELOG.md for v7.7.2([`0ff1130`](https://github.com/MadAppGang/claudish/commit/0ff11301027a6c7e4069c43515c2fbb05128ab0a))
 
 ## [7.7.2] - 2026-06-25
 
 ### Bug Fixes
 
-- v7.7.2 — skip 1Password resolution on help/version + silence expected field-skip noise([`5e131d5`](https://github.com/MadAppGang/claudish/commit/5e131d599a6525b10e8ec0055a43a402ece82f7f))
+- v7.7.2 — skip 1Password resolution on help/version + silence expected field-skip noise([`59f8bb1`](https://github.com/MadAppGang/claudish/commit/59f8bb1c4fa63b4758fcb14bfb0bb9e71ba2f227))
+
+### Documentation
+
+- update CHANGELOG.md for v7.7.1([`aea380b`](https://github.com/MadAppGang/claudish/commit/aea380bca49a6a866424505c4dcdce90cd4fc87a))
 
 ## [7.7.1] - 2026-06-25
 
