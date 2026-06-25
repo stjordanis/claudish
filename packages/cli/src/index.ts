@@ -638,11 +638,6 @@ if (isMcpMode) {
  * Run CLI mode
  */
 async function runCli() {
-  // The CLI/proxy path routes a model and reads its provider key from
-  // process.env, so resolve config-driven 1Password secrets now (no-op if the
-  // user has none). Management subcommands never reach here, so they never
-  // trigger 1Password. Must run BEFORE parseArgs/provider resolution.
-  await hydrateOpSecrets();
   const { checkClaudeInstalled, runClaudeWithProxy } = await import("./claude-runner.js");
   const { parseArgs, getVersion } = await import("./cli.js");
   const { DEFAULT_PORT_RANGE } = await import("./config.js");
@@ -845,6 +840,13 @@ async function runCli() {
     // This happens AFTER model selection so we know exactly which provider(s) are being used
     // The centralized ProviderResolver handles all provider detection and key requirements
     if (!cliConfig.monitor) {
+      // Resolve config-driven 1Password secrets at the POINT OF NEED — only for a
+      // real model-routing run. parseArgs() has already exited terminal flags
+      // (--version/--help/--init/--probe/--list-models) and team mode has already
+      // returned, so none of those touch 1Password. --monitor doesn't proxy a
+      // model, so it skips this too. No-op if the user has no op:// imports.
+      await hydrateOpSecrets();
+
       // When --model is explicitly set, it overrides ALL role mappings (opus/sonnet/haiku/subagent)
       // So we only need to validate the explicit model, not the profile mappings
       const hasExplicitModel = typeof cliConfig.model === "string";
