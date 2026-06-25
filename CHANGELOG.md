@@ -6,13 +6,16 @@ All notable changes to [Claudish](https://github.com/MadAppGang/claudish).
 
 ### Bug Fixes
 
-- Fix `ENOENT ... core_bg.wasm` crash in the compiled/Homebrew binary when 1Password is used. `bun --compile` bundles the SDK's WASM loader but rewrites its `__dirname` to the build machine's path (e.g. `/home/runner/work/...`), which doesn't exist at runtime. The 1Password sdkLoader now provisions the WASM on demand: it intercepts the loader's `readFileSync` and, in a compiled binary with a cold cache, downloads the pinned `@1password/sdk-core` tarball from the official npm registry, verifies its SHA-512, extracts `core_bg.wasm`, and caches it under `~/.claudish/cache/1password/`. ~10MB, fetched at most once per machine; npm installs and warm caches do zero network I/O. A user who doesn't use 1Password never loads the SDK or WASM on any command (lazy-by-need).
+- v7.7.1 — on-demand 1Password WASM fetch (fixes ENOENT core_bg.wasm in compiled binary)([`f70ebd1`](https://github.com/MadAppGang/claudish/commit/f70ebd141576d7aa2fc8ac7057749c7ec8577b79))
 
-## [7.7.0] - 2026-06-25
+### Documentation
+
+- update CHANGELOG.md for v7.7.0([`08ed721`](https://github.com/MadAppGang/claudish/commit/08ed7219b66c8f8343349e5b01572de3a6d1d277))
+- update CHANGELOG.md for v7.6.0([`9539933`](https://github.com/MadAppGang/claudish/commit/95399332be45ab19c96737ee07fe1b4d97465742))
 
 ### New Features
 
-- v7.7.0 — 1Password config TUI tab + probe-cache self-heal([`deacb7d`](https://github.com/MadAppGang/claudish/commit/deacb7dbfdd4a00a041503d119ab118494ebf293))
+- v7.7.0 — 1Password config TUI tab + probe-cache self-heal([`0a91277`](https://github.com/MadAppGang/claudish/commit/0a91277d8022da3a5f474684e78845a46edb8b18))
 
 ## [7.6.0] - 2026-06-22
 
