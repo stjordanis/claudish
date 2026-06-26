@@ -2,34 +2,16 @@
 
 All notable changes to [Claudish](https://github.com/MadAppGang/claudish).
 
-## [Unreleased]
-
-### Breaking Changes
-
-- **CLI flags renamed to a consistent naming scheme.** Old flag names are fully replaced — there are NO backward-compatibility aliases, so scripts and configs using the old names must be updated. The rename groups flags into clear families:
-
-  | Old flag | New flag |
-  |---|---|
-  | `--cost-tracker` | `--cost-track` |
-  | `--audit-costs` | `--cost-audit` |
-  | `--reset-costs` | `--cost-reset` |
-  | `--list-models` | `--models` |
-  | `--list-providers` | `--providers` |
-  | `--top-models` | `--models-top` |
-  | `--search` / `-s` | `--models-search` / `-s` (the `-s` short alias is kept) |
-  | `--force-update` | `--models-refresh` |
-  | `--skip-models-update` | `--models-skip-update` |
-  | `--debug` / `-d` | `--log-debug` / `-d` (the `-d` short alias is kept) |
-  | `--diag-mode` | `--log-diag` |
-  | `--no-logs` | `--log-off` |
-
-  `--log-level` is unchanged (already consistent). The `--debug` rename applies ONLY to claudish's own debug logging flag — Claude Code's `--debug` passthrough is untouched. The help output's `--profile` line no longer advertises a `-p` short alias (it was never parsed).
-
 ## [7.7.4] - 2026-06-26
 
 ### Bug Fixes
 
-- 1Password is now resolved per-credential, only when a routed model actually needs a missing key. Two fixes: (1) `claudish --version` / `--help` / `--init` / `--probe` / `--update` (and other terminal flags handled inside `parseArgs`) no longer trigger 1Password — hydration moved from the top of `runCli()` to the point of need, after `parseArgs` has exited those flags. (2) A model that needs no env-var key (e.g. `ollama@…`, any local model) or whose key is already present in `process.env` no longer resolves `op://` at all — claudish validates keys first, then resolves `op://` **seeking only the specific env vars that are needed-and-missing** (a glob like `op://Vault/Item/**` resolves just `OPENROUTER_API_KEY`, not every field). Net effect: the 1Password auth window appears only when a routed provider genuinely needs a key that 1Password can supply.
+- v7.7.4 — per-credential 1Password resolution (only when a routed model needs a missing key)([`07ce107`](https://github.com/MadAppGang/claudish/commit/07ce107afbb17c00b9326b7937b13e2ed5d0579b))
+- resolve config secrets at point-of-need, not top of runCli *(onepassword)* ([`7ed6a16`](https://github.com/MadAppGang/claudish/commit/7ed6a16e5c85556154036bd5ed6a18e42bbd6982))
+
+### Documentation
+
+- update CHANGELOG.md for v7.7.3([`47f822e`](https://github.com/MadAppGang/claudish/commit/47f822e68b727f0a958da7dc07a53eb7b33d7728))
 
 ## [7.7.3] - 2026-06-25
 
