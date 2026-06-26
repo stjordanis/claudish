@@ -52,9 +52,20 @@ function tarballUrl(): string {
   return `https://registry.npmjs.org/@1password/sdk-core/-/sdk-core-${SDK_CORE_VERSION}.tgz`;
 }
 
+/**
+ * Test seam: override the cache root (the dir that holds `1password/core_bg.wasm`)
+ * and the "real nearby wasm" resolver. Both default to the production behavior
+ * (homedir-based cache, createRequire-based package resolution). Tests inject
+ * temp paths so the copy/seed control flow can be exercised hermetically without
+ * touching the user's real `~/.claudish` or `node_modules`.
+ */
+let cacheRootOverride: string | null = null;
+let nearbyWasmResolverOverride: (() => string | null) | null = null;
+
 /** ~/.claudish/cache/1password/core_bg.wasm — the redirect target. */
 function cacheWasmPath(): string {
-  return join(homedir(), ".claudish", "cache", "1password", WASM_FILENAME);
+  const root = cacheRootOverride ?? join(homedir(), ".claudish");
+  return join(root, "cache", "1password", WASM_FILENAME);
 }
 
 /** Module-scoped guards so the intercept + provisioning each run at most once. */
@@ -186,11 +197,16 @@ export function ensureOpWasmAvailable(): Promise<void> {
     installReadFileSyncIntercept();
     // Warm cache → nothing to do (intercept already serves it).
     if (existsSync(cacheWasmPath())) return;
-    // Cold cache. The intercept will seed itself from the loader's own path IF
-    // that path exists (npm install) — so only download when we truly can't
-    // find a real copy. We can't know the loader's __dirname here, so we probe
-    // the conventional node_modules location relative to THIS module first.
-    if (findRealWasmNearby()) return; // npm-install case → intercept will copy it
+    // Cold cache. PROACTIVELY seed the cache from a real `core_bg.wasm` on disk
+    // near this module (the npm-install layout). We CANNOT rely on the intercept
+    // to seed it: in a compiled/bundled binary the loader's `__dirname` is FROZEN
+    // to the build-machine path, so the path it actually reads is a dead
+    // `/home/runner/...` that no longer exists — the intercept's
+    // `if (existsSync(loaderPath))` branch never fires and the cache stays cold.
+    // By copying the real nearby copy into the cache NOW, the intercept's
+    // `if (existsSync(cached))` branch serves it regardless of the frozen path.
+    if (seedCacheFromNearbyWasm()) return; // real copy found → seeded into cache
+    // No real copy anywhere (genuine compiled-binary cold start): download it.
     await downloadAndCacheWasm();
   })();
   // Mark ready on success (sticky) / clear the memo on failure so a later attempt
@@ -207,21 +223,49 @@ export function ensureOpWasmAvailable(): Promise<void> {
 }
 
 /**
- * Best-effort probe for a real `core_bg.wasm` already on disk near this module
- * (the npm-install layout: .../node_modules/@1password/sdk-core/nodejs/...).
- * When found, we DON'T download — the readFileSync intercept seeds the cache
- * from the loader's own path on first read. Returns true if a real copy exists.
- *
- * In a compiled binary there is no node_modules tree to find, so this returns
- * false and we fall through to the download.
+ * Resolve a real `core_bg.wasm` already on disk near this module (the npm-install
+ * layout: .../node_modules/@1password/sdk-core/nodejs/...). Returns its absolute
+ * path, or null if none exists (e.g. a compiled binary with no node_modules tree).
  */
-function findRealWasmNearby(): boolean {
+function resolveNearbyWasmPath(): string | null {
+  if (nearbyWasmResolverOverride) return nearbyWasmResolverOverride();
   try {
     const require = createRequire(import.meta.url);
     // Resolve the sdk-core package's loader; its sibling is core_bg.wasm.
     const coreJs = require.resolve("@1password/sdk-core/nodejs/core.js");
-    return existsSync(join(dirname(coreJs), WASM_FILENAME));
+    const wasm = join(dirname(coreJs), WASM_FILENAME);
+    return existsSync(wasm) ? wasm : null;
   } catch {
+    return null;
+  }
+}
+
+/**
+ * Proactively seed the cache from a real `core_bg.wasm` found near this module.
+ *
+ * This is the CRUX of the compiled-binary fix. A real npm-install copy exists at
+ * a path the bundled loader will NOT read (the loader's `__dirname` is frozen to
+ * the build machine), so we must copy the real copy into our cache OURSELVES —
+ * the intercept then serves the cache via its `existsSync(cached)` branch. We can
+ * no longer bet on the intercept's `existsSync(loaderPath)` branch firing, since
+ * `loaderPath` is the dead frozen `/home/runner/...` path on the user's machine.
+ *
+ * Returns true if a real copy was found AND successfully copied into the cache.
+ * Returns false when no real copy exists (genuine compiled cold start → caller
+ * falls through to download), or if the copy failed (caller downloads as a
+ * fallback rather than leaving the cache empty).
+ */
+function seedCacheFromNearbyWasm(): boolean {
+  const real = resolveNearbyWasmPath();
+  if (!real) return false; // no real copy → caller downloads
+  try {
+    const cached = cacheWasmPath();
+    mkdirSync(dirname(cached), { recursive: true });
+    copyFileSync(real, cached);
+    return true;
+  } catch {
+    // Copy failed (e.g. unwritable cache dir): let the caller download instead
+    // of returning true on an empty cache.
     return false;
   }
 }
@@ -231,4 +275,19 @@ export function __resetOpWasmStateForTest(): void {
   ensured = null;
   interceptInstalled = false;
   wasmReady = false;
+}
+
+/**
+ * Test seam: point the cache root and "nearby wasm" resolver at injected paths
+ * so the seed/copy control flow runs hermetically (no real `~/.claudish`, no
+ * `node_modules` probe, no network). Pass `null` for either to restore the
+ * production default. Combine with `__resetOpWasmStateForTest()`.
+ */
+export function __setOpWasmTestSeams(opts: {
+  cacheRoot?: string | null;
+  nearbyWasmResolver?: (() => string | null) | null;
+}): void {
+  if ("cacheRoot" in opts) cacheRootOverride = opts.cacheRoot ?? null;
+  if ("nearbyWasmResolver" in opts)
+    nearbyWasmResolverOverride = opts.nearbyWasmResolver ?? null;
 }
