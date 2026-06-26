@@ -93,13 +93,13 @@ describe("shouldWarmCatalog", () => {
     expect(shouldWarmCatalog({ model: "https://127.0.0.1/x" })).toBe(false);
   });
 
-  test("--skip-models-update with model → false", () => {
+  test("--models-skip-update with model → false", () => {
     expect(
       shouldWarmCatalog({ model: "gpt-4o", skipModelsUpdate: true })
     ).toBe(false);
   });
 
-  test("--skip-models-update without model → false", () => {
+  test("--models-skip-update without model → false", () => {
     expect(shouldWarmCatalog({ skipModelsUpdate: true })).toBe(false);
   });
 
@@ -251,7 +251,7 @@ describe("warmCatalogIfNeeded", () => {
       originalWrite;
   });
 
-  test("--skip-models-update → 'skipped' and refreshCatalog NOT called", async () => {
+  test("--models-skip-update → 'skipped' and refreshCatalog NOT called", async () => {
     const config = makeConfig({ model: "gpt-4o", skipModelsUpdate: true });
     const result = await warmCatalogIfNeeded(config, { now: NOW });
     expect(result).toBe("skipped");
@@ -300,7 +300,7 @@ describe("warmCatalogIfNeeded", () => {
     expect(result).toBe("warned");
     const stderrText = stderrChunks.join("");
     expect(stderrText).toContain("WARNING: Catalog stale");
-    expect(stderrText).toContain("--force-update");
+    expect(stderrText).toContain("--models-refresh");
   });
 
   test("missing cache + refreshed → 'ok'", async () => {
@@ -329,7 +329,7 @@ describe("warmCatalogIfNeeded", () => {
       "Use a local model: claudish --model ollama@llama3.2 'task'"
     );
     expect(stderrText).toContain(
-      "Skip catalog (advanced): claudish --skip-models-update 'task'"
+      "Skip catalog (advanced): claudish --models-skip-update 'task'"
     );
     expect(stderrText).toContain(
       "Claudish will not launch without catalog data when using cloud models."

@@ -155,5 +155,5 @@ if (written === 0) {
   console.log(
     "Make sure the log was captured with claudish v5.13.2+ (which includes raw SSE logging)."
   );
-  console.log("Re-run with: claudish --model <model> --debug ...");
+  console.log("Re-run with: claudish --model <model> --log-debug ...");
 }

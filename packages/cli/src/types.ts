@@ -20,13 +20,13 @@ export interface ClaudishConfig {
   anthropicApiKey?: string; // Required in monitor mode
   freeOnly?: boolean; // Show only free models in selector
   /**
-   * --force-update flag. Today: forces a fresh fetch on `--top-models`/`--list-models`.
+   * --models-refresh flag. Today: forces a fresh fetch on `--models-top`/`--models`.
    * After the launcher catalog warm lands, this also forces the warm step to refetch
    * the slim catalog from Firebase (ignoring TTL).
    */
   forceUpdate?: boolean;
   /**
-   * --skip-models-update flag. When true, the launcher catalog warm step is skipped
+   * --models-skip-update flag. When true, the launcher catalog warm step is skipped
    * entirely. No runtime effect yet — warm step lands in a later commit.
    */
   skipModelsUpdate?: boolean;

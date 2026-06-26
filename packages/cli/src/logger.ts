@@ -185,7 +185,7 @@ export function initLogger(
   level: "debug" | "info" | "minimal" = "info",
   noLogs: boolean = false
 ): void {
-  // Tier 1: Always-on structural logging (unless --no-logs)
+  // Tier 1: Always-on structural logging (unless --log-off)
   if (!noLogs) {
     const logsDir = join(homedir(), ".claudish", "logs");
     if (!existsSync(logsDir)) {
@@ -207,7 +207,7 @@ export function initLogger(
     scheduleFlush();
   }
 
-  // Tier 2: Debug verbose logging (existing behavior, only with --debug)
+  // Tier 2: Debug verbose logging (existing behavior, only with --log-debug)
   if (debugMode) {
     logLevel = level;
     const logsDir = join(process.cwd(), "logs");

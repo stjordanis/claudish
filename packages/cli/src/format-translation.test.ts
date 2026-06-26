@@ -5,7 +5,7 @@
  * through the parser stack and asserting correct Claude SSE output.
  *
  * Workflow for adding regression tests from production failures:
- *   1. Run failing model with --debug: claudish --model kimi-k2.5 --debug ...
+ *   1. Run failing model with --log-debug: claudish --model kimi-k2.5 --log-debug ...
  *   2. Extract fixtures: bun run src/test-fixtures/extract-sse-from-log.ts logs/claudish_*.log
  *   3. Add a describe() block below referencing the new fixture
  *   4. Run: bun test src/format-translation.test.ts

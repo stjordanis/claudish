@@ -11,7 +11,7 @@ OpenRouter charges per token. Claudish can help you track costs across sessions.
 ## Enable Cost Tracking
 
 ```bash
-claudish --cost-tracker "do some work"
+claudish --cost-track "do some work"
 ```
 
 This:
@@ -27,7 +27,7 @@ This:
 After some sessions:
 
 ```bash
-claudish --audit-costs
+claudish --cost-audit
 ```
 
 Output:
@@ -55,7 +55,7 @@ By model:
 Start fresh:
 
 ```bash
-claudish --reset-costs
+claudish --cost-reset
 ```
 
 This clears all accumulated cost data.

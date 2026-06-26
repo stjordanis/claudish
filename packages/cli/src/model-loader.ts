@@ -611,7 +611,7 @@ export interface Top100Response {
 
 /**
  * Fetch the top-100 ranked models from Firebase. Network-only — meant to be
- * fresh on every `--list-models` call; response is small (~50KB) so no disk
+ * fresh on every `--models` call; response is small (~50KB) so no disk
  * cache is maintained.
  */
 export async function getTop100Models(): Promise<Top100Response> {
@@ -640,7 +640,7 @@ export interface ProviderListEntry {
 
 /**
  * Fetch the list of active providers and their model counts.
- * Powers the CLI `--list-providers` command.
+ * Powers the CLI `--providers` command.
  */
 export async function getProviderList(): Promise<ProviderListEntry[]> {
   const url = `${FIREBASE_BASE_URL}?catalog=providers`;

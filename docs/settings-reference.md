@@ -30,7 +30,7 @@ All flags recognized by `parseArgs()` in `packages/cli/src/cli.ts`.
 | `--no-auto-approve` | | boolean | | Explicitly enable permission prompts (overrides -y) |
 | `--dangerous` | | boolean | false | Pass `--dangerouslyDisableSandbox` to Claude Code |
 | `--interactive` | `-i` | boolean | auto | Interactive mode (default when no prompt argument given) |
-| `--debug` | `-d` | boolean | false | Enable debug logging to `logs/claudish_*.log`; also sets `--log-level debug` unless overridden |
+| `--log-debug` | `-d` | boolean | false | Enable debug logging to `logs/claudish_*.log`; also sets `--log-level debug` unless overridden |
 | `--log-level` | | string | `"info"` | Log verbosity: `debug` (full content), `info` (truncated content), `minimal` (labels only) |
 | `--quiet` | `-q` | boolean | auto | Suppress `[claudish]` log messages (default in single-shot mode) |
 | `--verbose` | `-v` | boolean | auto | Show `[claudish]` messages (default in interactive mode) |
@@ -38,13 +38,13 @@ All flags recognized by `parseArgs()` in `packages/cli/src/cli.ts`.
 | `--monitor` | | boolean | false | Proxy to real Anthropic API and log all traffic (uses Claude Code's native auth) |
 | `--stdin` | | boolean | false | Read prompt from stdin instead of positional arguments |
 | `--free` | | boolean | false | Show only free models in interactive model selector |
-| `--profile` | `-p` | string | default profile | Named profile for model mapping |
-| `--cost-tracker` | | boolean | false | Enable cost tracking; also enables monitor mode |
-| `--audit-costs` | | action | | Show cost analysis report and exit |
-| `--reset-costs` | | action | | Reset accumulated cost statistics and exit |
-| `--models` / `--list-models` | `-s` / `--search` | action | | List ALL models (from OpenRouter + LiteLLM + local Ollama) or fuzzy-search by query |
-| `--top-models` | | action | | List curated recommended models and exit |
-| `--force-update` | | boolean | false | Force refresh of model catalog cache (used with `--models` or `--top-models`) |
+| `--profile` | | string | default profile | Named profile for model mapping |
+| `--cost-track` | | boolean | false | Enable cost tracking; also enables monitor mode |
+| `--cost-audit` | | action | | Show cost analysis report and exit |
+| `--cost-reset` | | action | | Reset accumulated cost statistics and exit |
+| `--models` | `-s` / `--models-search` | action | | List ALL models (from OpenRouter + LiteLLM + local Ollama) or fuzzy-search by query |
+| `--models-top` | | action | | List curated recommended models and exit |
+| `--models-refresh` | | boolean | false | Force refresh of model catalog cache (used with `--models` or `--models-top`) |
 | `--summarize-tools` | | boolean | false | Summarize tool descriptions to reduce prompt size for local/small models |
 | `--version` | | action | | Show version and exit |
 | `--help` | `-h` | action | | Show help message and exit |
@@ -65,7 +65,7 @@ All flags recognized by `parseArgs()` in `packages/cli/src/cli.ts`.
 
 **`--json` implies `--quiet`**: When `--json` is set, `config.quiet` is forced to `true` regardless of other flags.
 
-**`--cost-tracker` enables monitor mode**: Setting `--cost-tracker` automatically sets `config.monitor = true` if it is not already set.
+**`--cost-track` enables monitor mode**: Setting `--cost-track` automatically sets `config.monitor = true` if it is not already set.
 
 ---
 
@@ -289,11 +289,11 @@ Same schema as `~/.claudish/config.json`. Placed in the project root directory (
 | File | Purpose | Auto-updated |
 |------|---------|-------------|
 | `config.json` | Global config: profiles, telemetry, routing | Manual (via `claudish profile` commands) |
-| `all-models.json` | Cached full model catalog from OpenRouter | Every 2 days, or on `--force-update` |
+| `all-models.json` | Cached full model catalog from OpenRouter | Every 2 days, or on `--models-refresh` |
 | `litellm-models-{hash}.json` | Cached LiteLLM model list per server (hash = SHA-256 of `LITELLM_BASE_URL`) | On each LiteLLM model fetch |
 | `kimi-oauth.json` | Kimi OAuth credentials (access + refresh tokens) | On `claudish --kimi-login` |
 | `gemini-oauth.json` | Gemini Code Assist OAuth credentials | On `claudish --gemini-login` |
-| `logs/` | Debug log files (created when `--debug` is used) | Per session |
+| `logs/` | Debug log files (created when `--log-debug` is used) | Per session |
 
 ---
 
@@ -660,14 +660,14 @@ For local Qwen models, setting `CLAUDISH_QWEN_NO_THINK=1` prepends `/no_think` t
 | Path | Purpose | Auto-update Trigger |
 |------|---------|---------------------|
 | `~/.claudish/config.json` | Global settings, profiles, telemetry, routing | Profile/telemetry commands |
-| `~/.claudish/all-models.json` | Full OpenRouter model catalog | Every 2 days; or `--force-update` |
+| `~/.claudish/all-models.json` | Full OpenRouter model catalog | Every 2 days; or `--models-refresh` |
 | `~/.claudish/litellm-models-{hash}.json` | LiteLLM model list (one file per unique `LITELLM_BASE_URL`) | On each LiteLLM model list fetch |
 | `~/.claudish/kimi-oauth.json` | Kimi OAuth access + refresh tokens | `claudish --kimi-login` |
 | `~/.claudish/gemini-oauth.json` | Gemini Code Assist OAuth tokens | `claudish --gemini-login` |
 | `.claudish.json` | Local/project config | Profile commands with `--local` |
 | `.env` | Environment variables (auto-loaded at startup) | Manual |
 
-Cache files can be force-refreshed with `claudish --models --force-update` or `claudish --top-models --force-update`. The `--force-update` flag deletes `all-models.json`, `pricing-cache.json`, and all `litellm-models-*.json` files before fetching fresh data.
+Cache files can be force-refreshed with `claudish --models --models-refresh` or `claudish --models-top --models-refresh`. The `--models-refresh` flag deletes `all-models.json`, `pricing-cache.json`, and all `litellm-models-*.json` files before fetching fresh data.
 
 ---
 
@@ -735,7 +735,7 @@ claudish --model-opus g@gemini-3-pro --model-sonnet oai@gpt-5.3
 claudish -y --dangerous --model g@gemini-2.0-flash "task"
 
 # Debug
-claudish --debug --model g@gemini-2.0-flash "task"
+claudish --log-debug --model g@gemini-2.0-flash "task"
 
 # Profile management
 claudish init
@@ -746,7 +746,7 @@ claudish profile use myprofile --global
 # Model discovery
 claudish --models               # all models
 claudish --models gemini        # search
-claudish --top-models           # curated list
+claudish --models-top           # curated list
 claudish --models --json        # JSON output
 
 # OAuth login

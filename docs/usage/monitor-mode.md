@@ -11,7 +11,7 @@ Why would you want this? Learning. Debugging. Curiosity.
 ## What It Does
 
 ```bash
-claudish --monitor --debug "analyze the project structure"
+claudish --monitor --log-debug "analyze the project structure"
 ```
 
 This:
@@ -39,7 +39,7 @@ Claudish extracts the token from Claude Code's requests. No extra config needed.
 
 Enable debug mode to save logs:
 ```bash
-claudish --monitor --debug "your prompt"
+claudish --monitor --log-debug "your prompt"
 ```
 
 Logs are saved to `logs/claudish_*.log`.
@@ -71,7 +71,7 @@ Run the same task in monitor mode (Claude) and regular mode (OpenRouter model). 
 ## Example Session
 
 ```bash
-$ claudish --monitor --debug "list files in the current directory"
+$ claudish --monitor --log-debug "list files in the current directory"
 
 [claudish] Monitor mode enabled - proxying to real Anthropic API
 [claudish] API key will be extracted from Claude Code's requests
@@ -94,7 +94,7 @@ cat logs/claudish_2024-01-15_103042.log
 Control how much gets logged:
 
 ```bash
-# Full detail (default with --debug)
+# Full detail (default with --log-debug)
 claudish --monitor --log-level debug "prompt"
 
 # Truncated content (easier to read)
@@ -122,19 +122,19 @@ Don't commit log files. They're gitignored by default.
 Want to see how much your sessions cost?
 
 ```bash
-claudish --monitor --cost-tracker "do some work"
+claudish --monitor --cost-track "do some work"
 ```
 
 This tracks token usage and estimates costs.
 
 **View the report:**
 ```bash
-claudish --audit-costs
+claudish --cost-audit
 ```
 
 **Reset tracking:**
 ```bash
-claudish --reset-costs
+claudish --cost-reset
 ```
 
 Note: Cost tracking is experimental. Estimates may not be exact.

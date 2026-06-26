@@ -198,7 +198,7 @@ claudish --help-ai > claudish-agent-guide.md
    claudish --models gemini
 
    # Get top recommended models (JSON)
-   claudish --top-models --json
+   claudish --models-top --json
    ```
 
 2. **Run Claudish through sub-agent** (recommended pattern):
@@ -250,7 +250,7 @@ claudish --help-ai > claudish-agent-guide.md
 - ✅ Use file-based patterns to avoid context window pollution
 - ✅ Delegate to sub-agents instead of running directly
 - ✅ Return summaries only (not full conversation transcripts)
-- ✅ Choose appropriate model for task (see `--models` or `--top-models`)
+- ✅ Choose appropriate model for task (see `--models` or `--models-top`)
 
 **Resources:**
 - Full AI agent guide: `claudish --help-ai`
@@ -284,7 +284,7 @@ claudish [OPTIONS] <claude-args...>
 | `--no-auto-approve` | | Explicitly enable permission prompts | |
 | `--dangerous` | | Pass `--dangerouslyDisableSandbox` | `false` |
 | `--port <port>` | | Proxy server port | Random (3000-9000) |
-| `--debug` | `-d` | Enable debug logging to `logs/` | `false` |
+| `--log-debug` | `-d` | Enable debug logging to `logs/` | `false` |
 | `--log-level <level>` | | Log verbosity: `debug`, `info`, `minimal` | `info` |
 | `--quiet` | `-q` | Suppress `[claudish]` messages | Default in single-shot |
 | `--verbose` | `-v` | Show `[claudish]` messages | Default in interactive |
@@ -293,12 +293,12 @@ claudish [OPTIONS] <claude-args...>
 | `--free` | | Show only free models in selector | `false` |
 | `--monitor` | | Proxy to real Anthropic API and log traffic | `false` |
 | `--summarize-tools` | | Summarize tool descriptions (for local models) | `false` |
-| `--cost-tracker` | | Enable cost tracking (enables monitor mode) | `false` |
-| `--audit-costs` | | Show cost analysis report | |
-| `--reset-costs` | | Reset accumulated cost statistics | |
-| `--models [query]` | `-s` | List all models or fuzzy search | |
-| `--top-models` | | Show curated recommended models | |
-| `--force-update` | | Force refresh model cache | |
+| `--cost-track` | | Enable cost tracking (enables monitor mode) | `false` |
+| `--cost-audit` | | Show cost analysis report | |
+| `--cost-reset` | | Reset accumulated cost statistics | |
+| `--models [query]` | `-s` (`--models-search`) | List all models or fuzzy search | |
+| `--models-top` | | Show curated recommended models | |
+| `--models-refresh` | | Force refresh model cache | |
 | `--init` | | Install Claudish skill in current project | |
 | `--mcp` | | Run as MCP server | |
 | `--gemini-login` | | Login to Gemini Code Assist via OAuth | |
@@ -693,7 +693,7 @@ List all models:
 ```bash
 claudish --models              # List all OpenRouter models
 claudish --models gemini       # Search for specific models
-claudish --top-models          # Show curated recommendations
+claudish --models-top          # Show curated recommendations
 ```
 
 ## Claude Code Flag Passthrough (NEW in v5.3.0)
@@ -889,7 +889,7 @@ claudish "debug issue" --verbose
 claudish "analyze code" --cwd /path/to/project
 
 # Multiple flags
-claudish --model openai/gpt-5.3-codex "task" --verbose --debug
+claudish --model openai/gpt-5.3-codex "task" --verbose --log-debug
 ```
 
 ### Monitor Mode
@@ -898,14 +898,14 @@ claudish --model openai/gpt-5.3-codex "task" --verbose --debug
 
 ```bash
 # Enable monitor mode (requires real Anthropic API key)
-claudish --monitor --debug "implement a feature"
+claudish --monitor --log-debug "implement a feature"
 ```
 
 **What Monitor Mode Does:**
 - ✅ **Proxies to REAL Anthropic API** (not OpenRouter) - Uses your actual Anthropic API key
 - ✅ **Logs ALL traffic** - Captures complete requests and responses
 - ✅ **Both streaming and JSON** - Logs SSE streams and JSON responses
-- ✅ **Debug logs to file** - Saves to `logs/claudish_*.log` when `--debug` is used
+- ✅ **Debug logs to file** - Saves to `logs/claudish_*.log` when `--log-debug` is used
 - ✅ **Pass-through proxy** - No translation, forwards as-is to Anthropic
 
 **When to use Monitor Mode:**
@@ -919,8 +919,8 @@ claudish --monitor --debug "implement a feature"
 # Monitor mode requires a REAL Anthropic API key (not placeholder)
 export ANTHROPIC_API_KEY='sk-ant-api03-...'
 
-# Use with --debug to save logs to file
-claudish --monitor --debug "your task"
+# Use with --log-debug to save logs to file
+claudish --monitor --log-debug "your task"
 
 # Logs are saved to: logs/claudish_TIMESTAMP.log
 ```
@@ -950,7 +950,7 @@ data: {"type":"content_block_start",...}
 === End Streaming Response ===
 ```
 
-**Note:** Monitor mode charges your Anthropic account (not OpenRouter). Use `--debug` flag to save logs for analysis.
+**Note:** Monitor mode charges your Anthropic account (not OpenRouter). Use `--log-debug` flag to save logs for analysis.
 
 ### Output Modes
 

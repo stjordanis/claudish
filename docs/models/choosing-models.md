@@ -25,7 +25,7 @@ Pick one. Start working. Switch later if needed.
 
 **Top recommended (curated list):**
 ```bash
-claudish --top-models
+claudish --models-top
 ```
 
 **All OpenRouter models (hundreds):**
@@ -42,7 +42,7 @@ claudish --models gemini
 
 **JSON output (for scripts):**
 ```bash
-claudish --top-models --json
+claudish --models-top --json
 claudish --models --json
 ```
 
@@ -200,7 +200,7 @@ Any valid OpenRouter model ID works with the `openrouter@` or `or@` prefix.
 The model cache updates automatically every 2 days. Force it:
 
 ```bash
-claudish --top-models --force-update
+claudish --models-top --models-refresh
 ```
 
 ---

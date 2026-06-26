@@ -877,7 +877,7 @@ async function runCli() {
     if (!cliConfig.interactive && !cliConfig.monitor && !cliConfig.model && !hasProfileTiers) {
       console.error("Error: Model must be specified in non-interactive mode");
       console.error("Use --model <model> flag, set CLAUDISH_MODEL env var, or use --profile");
-      console.error("Try: claudish --list-models");
+      console.error("Try: claudish --models");
       process.exit(1);
     }
 
@@ -1001,7 +1001,7 @@ async function runCli() {
     // Returns one of:
     //   "ok"        — catalog ready (fresh or freshly refreshed)
     //   "warned"    — proceed with stale cache, warning already on stderr
-    //   "skipped"   — local model or --skip-models-update
+    //   "skipped"   — local model or --models-skip-update
     //   "hard_fail" — missing cache + network failure → exit 1
     const warmOutcome = await warmCatalogIfNeeded(cliConfig);
     if (warmOutcome === "hard_fail") {

@@ -330,7 +330,7 @@ function compareVersionPartsDesc(a: number[], b: number[]): number {
  * shows models so the newest is always at the top.
  *
  * Exported so cli.ts can apply the same ordering to ModelDoc-shaped lists
- * (`--list-models`, `--top-models`, etc.) without duplicating the logic.
+ * (`--models`, `--models-top`, etc.) without duplicating the logic.
  */
 export function compareByReleaseDateDesc(
   a: { releaseDate?: string; id?: string; modelId?: string },

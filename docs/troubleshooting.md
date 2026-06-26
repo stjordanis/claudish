@@ -105,7 +105,7 @@ Some models can't use Claude Code's file/bash tools.
 
 Check capabilities:
 ```bash
-claudish --top-models
+claudish --models-top
 # Look for ✓ in the "Tools" column
 ```
 
@@ -306,7 +306,7 @@ Make sure both have valid keys.
 
 **Check your usage:**
 ```bash
-claudish --audit-costs  # If using cost tracking
+claudish --cost-audit  # If using cost tracking
 ```
 
 **Reduce usage:**
@@ -321,7 +321,7 @@ claudish --audit-costs  # If using cost tracking
 When all else fails, enable debug logging:
 
 ```bash
-claudish --debug --verbose --model x-ai/grok-code-fast-1 "your prompt"
+claudish --log-debug --verbose --model x-ai/grok-code-fast-1 "your prompt"
 ```
 
 This creates `logs/claudish_*.log` with detailed information.

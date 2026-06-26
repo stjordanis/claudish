@@ -30,7 +30,7 @@ import { VERSION } from "../version.js";
  * Result returned by `warmCatalogIfNeeded`. The launcher reacts to this:
  *   - "ok"        → proceed to createProxyServer
  *   - "warned"    → proceed (warning already printed to stderr)
- *   - "skipped"   → proceed silently (local model or --skip-models-update)
+ *   - "skipped"   → proceed silently (local model or --models-skip-update)
  *   - "hard_fail" → exit 1 (error already printed to stderr)
  */
 export type WarmOutcome = "ok" | "warned" | "skipped" | "hard_fail";
@@ -48,7 +48,7 @@ const HARD_FAIL_MESSAGE =
   "To proceed:\n" +
   "  - Check network connection\n" +
   "  - Use a local model: claudish --model ollama@llama3.2 'task'\n" +
-  "  - Skip catalog (advanced): claudish --skip-models-update 'task'\n" +
+  "  - Skip catalog (advanced): claudish --models-skip-update 'task'\n" +
   "\n" +
   "Claudish will not launch without catalog data when using cloud models.\n";
 
@@ -75,7 +75,7 @@ const LOCAL_MODEL_PREFIXES = [
  * Pure trigger function. No I/O, no side effects.
  *
  * Returns `false` (skip warm) when:
- *   - The user passed `--skip-models-update` (hard skip, regardless of model).
+ *   - The user passed `--models-skip-update` (hard skip, regardless of model).
  *   - The user passed a local-only model prefix (case-insensitive).
  *
  * Returns `true` (warm) when:
@@ -212,7 +212,7 @@ function startSpinner(label: string, quiet = false): Spinner {
  *
  * Drives the FR-4 state machine end-to-end:
  *
- *   1. Trigger gate — if local model or `--skip-models-update`, return "skipped".
+ *   1. Trigger gate — if local model or `--models-skip-update`, return "skipped".
  *   2. Print the "preparing model catalog..." header (suppressed by `--quiet`).
  *   3. Classify on-disk cache state.
  *   4. Decide:
@@ -302,7 +302,7 @@ export async function warmCatalogIfNeeded(
     const ageStr = humanizeAge(ageMs);
     process.stderr.write(
       `WARNING: Catalog stale (${ageStr}). Using cached version. ` +
-        `Run \`claudish --force-update\` to retry.\n`
+        `Run \`claudish --models-refresh\` to retry.\n`
     );
     return "warned";
   }

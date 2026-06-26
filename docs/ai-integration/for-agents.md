@@ -220,7 +220,7 @@ which claudish || npx claudish@latest --version
 
 **Verbose mode for debugging:**
 ```bash
-claudish --verbose --debug --model x-ai/grok "test prompt"
+claudish --verbose --log-debug --model x-ai/grok "test prompt"
 ```
 
 **Check logs:**

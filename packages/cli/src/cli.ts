@@ -94,11 +94,11 @@ export function getVersion(): string {
 
 /**
  * Clear writable claudish caches (pricing, LiteLLM, recommended models).
- * Called when --force-update flag is used.
+ * Called when --models-refresh flag is used.
  *
  * NOTE: We intentionally do NOT delete `all-models.json` — that file is the
  * OpenRouter catalog resolver's slim-catalog cache, sourced from Firebase.
- * Deleting it would force a cold re-warm on every --force-update call.
+ * Deleting it would force a cold re-warm on every --models-refresh call.
  */
 function clearAllModelCaches(): void {
   const cacheDir = join(homedir(), ".claudish");
@@ -284,9 +284,9 @@ export async function parseArgs(args: string[]): Promise<ClaudishConfig> {
       config.dangerous = true;
     } else if (arg === "--interactive" || arg === "-i") {
       config.interactive = true;
-    } else if (arg === "--debug" || arg === "-d") {
+    } else if (arg === "--log-debug" || arg === "-d") {
       config.debug = true;
-      // Default to debug log level when --debug is enabled (can be overridden by --log-level)
+      // Default to debug log level when --log-debug is enabled (can be overridden by --log-level)
       if (config.logLevel === "info") {
         config.logLevel = "debug";
       }
@@ -319,12 +319,12 @@ export async function parseArgs(args: string[]): Promise<ClaudishConfig> {
       config.stdin = true;
     } else if (arg === "--free") {
       config.freeOnly = true;
-    } else if (arg === "--force-update") {
-      // Force-refresh model caches. Consumed by the --top-models/--list-models
+    } else if (arg === "--models-refresh") {
+      // Force-refresh model caches. Consumed by the --models-top/--models
       // branches below AND (after the launcher warm step lands) by
       // warmCatalogIfNeeded() to bypass the TTL check.
       config.forceUpdate = true;
-    } else if (arg === "--skip-models-update") {
+    } else if (arg === "--models-skip-update") {
       // Skip the launcher catalog warm step entirely. No runtime effect yet —
       // wired up by a later commit that introduces warmCatalogIfNeeded().
       config.skipModelsUpdate = true;
@@ -368,17 +368,17 @@ export async function parseArgs(args: string[]): Promise<ClaudishConfig> {
         process.exit(1);
       }
       config.opImport = v;
-    } else if (arg === "--cost-tracker") {
+    } else if (arg === "--cost-track") {
       // Enable cost tracking for this session
       config.costTracking = true;
       // In monitor mode, we'll track costs instead of proxying
       if (!config.monitor) {
         config.monitor = true; // Switch to monitor mode to track requests
       }
-    } else if (arg === "--audit-costs") {
+    } else if (arg === "--cost-audit") {
       // Special mode to just show cost analysis
       config.auditCosts = true;
-    } else if (arg === "--reset-costs") {
+    } else if (arg === "--cost-reset") {
       // Reset accumulated cost statistics
       config.resetCosts = true;
     } else if (arg === "--version") {
@@ -428,18 +428,18 @@ export async function parseArgs(args: string[]): Promise<ClaudishConfig> {
         timeoutMs: probeTimeoutMs,
       });
       process.exit(0);
-    } else if (arg === "--top-models") {
+    } else if (arg === "--models-top") {
       // Show recommended/top models (curated Firebase catalog)
       const hasJsonFlag = args.includes("--json");
       // Read from cliConfig (set by the main argv loop). Fall back to args.includes
-      // so behavior is preserved when --force-update appears AFTER --top-models in argv.
-      const forceUpdate = config.forceUpdate || args.includes("--force-update");
+      // so behavior is preserved when --models-refresh appears AFTER --models-top in argv.
+      const forceUpdate = config.forceUpdate || args.includes("--models-refresh");
 
       if (forceUpdate) clearAllModelCaches();
 
       await printRecommendedModels(hasJsonFlag, forceUpdate);
       process.exit(0);
-    } else if (arg === "--list-providers") {
+    } else if (arg === "--providers") {
       // List every provider in the Firebase catalog + active-model count.
       const hasJsonFlag = args.includes("--json");
       try {
@@ -453,7 +453,7 @@ export async function parseArgs(args: string[]): Promise<ClaudishConfig> {
           for (const { slug, count } of providers) {
             console.log(`  ${slug.padEnd(20)} ${String(count).padStart(5)}`);
           }
-          console.log("\nUsage:  claudish --list-models --provider <slug>");
+          console.log("\nUsage:  claudish --models --provider <slug>");
           console.log("        claudish -s <query>                    (fuzzy search)\n");
         }
         process.exit(0);
@@ -465,9 +465,8 @@ export async function parseArgs(args: string[]): Promise<ClaudishConfig> {
       }
     } else if (
       arg === "--models" ||
-      arg === "--list-models" ||
       arg === "-s" ||
-      arg === "--search"
+      arg === "--models-search"
     ) {
       // Check for optional search query (next arg that doesn't start with --)
       const nextArg = args[i + 1];
@@ -476,8 +475,8 @@ export async function parseArgs(args: string[]): Promise<ClaudishConfig> {
 
       const hasJsonFlag = args.includes("--json");
       // Read from cliConfig (set by the main argv loop). Fall back to args.includes
-      // so behavior is preserved when --force-update appears AFTER --list-models in argv.
-      const forceUpdate = config.forceUpdate || args.includes("--force-update");
+      // so behavior is preserved when --models-refresh appears AFTER --models in argv.
+      const forceUpdate = config.forceUpdate || args.includes("--models-refresh");
 
       // Pick up --provider <slug> anywhere in the argv. We DON'T consume it
       // from the loop — it's read-once here and harmless to let the outer
@@ -494,7 +493,7 @@ export async function parseArgs(args: string[]): Promise<ClaudishConfig> {
         // --provider is a filter for the catalog browser; searches are
         // already Firebase-scoped and don't take a provider slug.
         console.error(
-          "Use --provider together with --list-models (without a query) to filter the catalog."
+          "Use --provider together with --models (without a query) to filter the catalog."
         );
         console.error("For keyword search, drop --provider: claudish -s <query>");
         process.exit(1);
@@ -507,17 +506,17 @@ export async function parseArgs(args: string[]): Promise<ClaudishConfig> {
         // Provider filter: Firebase catalog trimmed to one provider
         await printByProvider(providerSlug, hasJsonFlag);
       } else {
-        // Default --list-models = top100 ranked Firebase catalog + local footer
+        // Default --models = top100 ranked Firebase catalog + local footer
         await printTop100(hasJsonFlag);
       }
       process.exit(0);
     } else if (arg === "--summarize-tools") {
       // Summarize tool descriptions to reduce prompt size for local models
       config.summarizeTools = true;
-    } else if (arg === "--no-logs") {
+    } else if (arg === "--log-off") {
       // Disable always-on structural logging to ~/.claudish/logs/
       config.noLogs = true;
-    } else if (arg === "--diag-mode" && i + 1 < args.length) {
+    } else if (arg === "--log-diag" && i + 1 < args.length) {
       const mode = args[++i].toLowerCase();
       if (["auto", "logfile", "off"].includes(mode)) {
         config.diagMode = mode as typeof config.diagMode;
@@ -592,7 +591,7 @@ export async function parseArgs(args: string[]): Promise<ClaudishConfig> {
     if (!config.quiet) {
       console.log("[claudish] Monitor mode enabled - proxying to real Anthropic API");
       console.log("[claudish] Using Claude Code's native authentication");
-      console.log("[claudish] Tip: Run with --debug to see request/response details");
+      console.log("[claudish] Tip: Run with --log-debug to see request/response details");
     }
   }
 
@@ -924,11 +923,11 @@ async function printTop100(jsonOutput: boolean): Promise<void> {
   await printLocalProvidersFooter();
 
   console.log("");
-  console.log("Filter by provider: claudish --list-models --provider <slug>");
+  console.log("Filter by provider: claudish --models --provider <slug>");
   console.log("                    (e.g. opencode-zen, anthropic, openai, google, x-ai)");
-  console.log("All providers:      claudish --list-providers");
+  console.log("All providers:      claudish --providers");
   console.log("Search by keyword:  claudish -s <query>");
-  console.log("Top recommended:    claudish --top-models");
+  console.log("Top recommended:    claudish --models-top");
   console.log("");
 }
 
@@ -975,7 +974,7 @@ async function printByProvider(providerSlug: string, jsonOutput: boolean): Promi
 }
 
 /**
- * Print the Firebase-backed recommended models list (used by --top-models).
+ * Print the Firebase-backed recommended models list (used by --models-top).
  */
 async function printRecommendedModels(jsonOutput: boolean, forceUpdate: boolean): Promise<void> {
   let doc: Awaited<ReturnType<typeof getRecommendedModels>>;
@@ -1091,15 +1090,15 @@ async function printRecommendedModels(jsonOutput: boolean, forceUpdate: boolean)
   console.log("  Set default:  export CLAUDISH_MODEL=<model>");
   console.log("                 or:  claudish --model <model> ...");
   console.log("");
-  console.log("  For more: claudish --list-models                (browse full catalog)");
-  console.log("            claudish --list-providers              (list all providers + counts)");
+  console.log("  For more: claudish --models                     (browse full catalog)");
+  console.log("            claudish --providers                   (list all providers + counts)");
   console.log("            claudish -s <query>                    (search by keyword)");
-  console.log("            claudish --top-models --force-update   (refresh from Firebase)");
+  console.log("            claudish --models-top --models-refresh (refresh from Firebase)");
   console.log("");
 }
 
 // Legacy OpenRouter catalog updater was removed when claudish switched to
-// Firebase for model information. The --top-models and --list-models commands
+// Firebase for model information. The --models-top and --models commands
 // now go directly through `getRecommendedModels()` in model-loader.ts.
 
 /**
@@ -1834,347 +1833,291 @@ async function probeModelRouting(
  * Print help message
  */
 function printHelp(): void {
+  // ── Color palette ─────────────────────────────────────────────────────────
+  // Gated on an interactive stdout + the NO_COLOR convention so that
+  // `claudish --help | less` / redirecting to a file stays free of escape codes.
+  const useColor = !!process.stdout.isTTY && !process.env.NO_COLOR;
+  const c = (code: string) => (s: string) => (useColor ? `\x1b[${code}m${s}\x1b[0m` : s);
+  const bold = c("1");
+  const dim = c("2");
+  const cyan = c("36"); // section headers
+  const green = c("32"); // commands / flags
+  const yellow = c("33"); // values / placeholders
+  const magenta = c("35"); // provider shortcuts
+  const blue = c("34"); // env var names
+  // Section header helper — a colored, underlined title with a leading rule mark.
+  const h = (title: string) => bold(cyan(`▌ ${title}`));
+
   console.log(`
-claudish - Run Claude Code with any AI model (OpenRouter, Gemini, OpenAI, MiniMax, Kimi, GLM, Z.AI, Local)
+${bold("claudish")} ${dim("·")} Run Claude Code with any AI model
+${dim("OpenRouter · Gemini · OpenAI · xAI · MiniMax · Kimi · GLM · Z.AI · Poe · LiteLLM · Local")}
 
-USAGE:
-  claudish                                # Interactive mode (default, shows model selector)
-  claudish [OPTIONS] <claude-args...>     # Single-shot mode (requires --model)
-  claudish --team a,b,c "prompt"          # Run models in parallel (magmux grid)
-  claudish --team a,b,c -f input.md       # Team mode with file input
+${h("USAGE")}
+  ${green("claudish")}                                ${dim("# Interactive mode (default, model selector)")}
+  ${green("claudish")} ${yellow("[OPTIONS] <claude-args...>")}     ${dim("# Single-shot mode (requires --model)")}
+  ${green("claudish")} ${green("--team")} ${yellow("a,b,c")} ${yellow('"prompt"')}          ${dim("# Run models in parallel (magmux grid)")}
+  ${green("claudish")} ${green("--team")} ${yellow("a,b,c")} ${green("-f")} ${yellow("input.md")}       ${dim("# Team mode with file input")}
 
-MODEL ROUTING:
-  New syntax: provider@model[:concurrency]
-    google@gemini-3-pro              Direct Google API (explicit)
-    openrouter@google/gemini-3-pro   OpenRouter (explicit)
-    oai@gpt-5.3                      Direct OpenAI API (shortcut)
-    ollama@llama3.2:3                Local Ollama with 3 concurrent requests
-    ollama@llama3.2:0                Local Ollama with no limits
+${h("MODEL ROUTING")}
+  ${bold("New syntax:")} ${yellow("provider@model[:concurrency]")}
+    ${magenta("google@gemini-3-pro")}              ${dim("Direct Google API (explicit)")}
+    ${magenta("openrouter@google/gemini-3-pro")}   ${dim("OpenRouter (explicit)")}
+    ${magenta("oai@gpt-5.3")}                      ${dim("Direct OpenAI API (shortcut)")}
+    ${magenta("ollama@llama3.2:3")}                ${dim("Local Ollama, 3 concurrent requests")}
+    ${magenta("ollama@llama3.2:0")}                ${dim("Local Ollama, no limits")}
 
-  Provider shortcuts:
-    g, gemini    -> Google Gemini     google@gemini-3-pro
-    oai          -> OpenAI Direct     oai@gpt-5.3
-    or           -> OpenRouter        or@openai/gpt-5.3
-    mm, mmax     -> MiniMax Direct    mm@MiniMax-M2.1
-    kimi, moon   -> Kimi Direct       kimi@kimi-k2-thinking-turbo
-    glm, zhipu   -> GLM Direct        glm@glm-4.7
-    z-ai, zai    -> Z.AI Direct       z-ai@glm-4.7
-    x-ai, grok   -> xAI / Grok        x-ai@grok-3
-    oc           -> OllamaCloud       oc@llama-3.1
-    llama,lc,meta-> OllamaCloud       llama@llama-3.1
-    zen          -> OpenCode Zen      zen@grok-code
-    v, vertex    -> Vertex AI         v@gemini-2.5-flash
-    go           -> Gemini CodeAssist go@gemini-2.5-flash
-    poe          -> Poe               poe@GPT-4o
-    ollama       -> Ollama (local)    ollama@llama3.2
-    lms,lmstudio -> LM Studio (local) lms@qwen
-    vllm         -> vLLM (local)      vllm@model
-    mlx          -> MLX (local)       mlx@model
+  ${bold("Provider shortcuts:")}
+    ${magenta("g, gemini")}      ${dim("->")} Google Gemini       ${dim("google@gemini-3-pro")}
+    ${magenta("oai")}            ${dim("->")} OpenAI Direct       ${dim("oai@gpt-5.3")}
+    ${magenta("cx, codex")}      ${dim("->")} OpenAI Codex        ${dim("cx@gpt-5.3 (Responses API)")}
+    ${magenta("or")}             ${dim("->")} OpenRouter          ${dim("or@openai/gpt-5.3")}
+    ${magenta("x-ai, xai, grok")} ${dim("->")} xAI / Grok         ${dim("x-ai@grok-3")}
+    ${magenta("mm, mmax")}       ${dim("->")} MiniMax Direct      ${dim("mm@MiniMax-M2.1")}
+    ${magenta("mmc")}            ${dim("->")} MiniMax Coding      ${dim("mmc@MiniMax-M2.1")}
+    ${magenta("kimi, moon")}     ${dim("->")} Kimi Direct         ${dim("kimi@kimi-k2-thinking-turbo")}
+    ${magenta("kc")}             ${dim("->")} Kimi Coding         ${dim("kc@kimi-k2-thinking-turbo")}
+    ${magenta("glm, zhipu")}     ${dim("->")} GLM Direct          ${dim("glm@glm-4.7")}
+    ${magenta("gc")}             ${dim("->")} GLM Coding          ${dim("gc@glm-4.7")}
+    ${magenta("z-ai, zai")}      ${dim("->")} Z.AI Direct         ${dim("z-ai@glm-4.7")}
+    ${magenta("oc, llama, lc, meta")} ${dim("->")} OllamaCloud    ${dim("oc@llama-3.1")}
+    ${magenta("zen")}            ${dim("->")} OpenCode Zen        ${dim("zen@grok-code")}
+    ${magenta("zengo, zgo")}     ${dim("->")} OpenCode Zen Go     ${dim("zengo@grok-code")}
+    ${magenta("v, vertex")}      ${dim("->")} Vertex AI           ${dim("v@gemini-2.5-flash")}
+    ${magenta("go")}             ${dim("->")} Gemini Code Assist  ${dim("go@gemini-2.5-flash")}
+    ${magenta("poe")}            ${dim("->")} Poe                 ${dim("poe@GPT-4o")}
+    ${magenta("litellm, ll")}    ${dim("->")} LiteLLM             ${dim("ll@gpt-4o (needs LITELLM_BASE_URL)")}
+    ${magenta("ds")}             ${dim("->")} DeepSeek            ${dim("ds@deepseek-chat")}
+    ${magenta("ollama")}         ${dim("->")} Ollama (local)      ${dim("ollama@llama3.2")}
+    ${magenta("lms, lmstudio")}  ${dim("->")} LM Studio (local)   ${dim("lms@qwen")}
+    ${magenta("vllm")}           ${dim("->")} vLLM (local)        ${dim("vllm@model")}
+    ${magenta("mlx")}            ${dim("->")} MLX (local)         ${dim("mlx@model")}
 
-  Native model auto-detection (when no provider specified):
-    google/*, gemini-*      -> Google API
-    openai/*, gpt-*, o1-*   -> OpenAI API
-    meta-llama/*, llama-*   -> OllamaCloud
-    minimax/*, abab-*       -> MiniMax API
-    moonshot/*, kimi-*      -> Kimi API
-    zhipu/*, glm-*          -> GLM API
-    poe:*                   -> Poe
-    anthropic/*, claude-*   -> Native Anthropic
-    (unknown vendor/)       -> Error (use openrouter@vendor/model)
+  ${bold("Native auto-detection")} ${dim("(when no provider specified):")}
+    ${yellow("google/*, gemini-*")}      ${dim("->")} Google API
+    ${yellow("openai/*, gpt-*, o1-*")}   ${dim("->")} OpenAI API
+    ${yellow("x-ai/*, grok-*")}          ${dim("->")} xAI
+    ${yellow("meta-llama/*, llama-*")}   ${dim("->")} OllamaCloud
+    ${yellow("minimax/*, abab-*")}       ${dim("->")} MiniMax API
+    ${yellow("moonshot/*, kimi-*")}      ${dim("->")} Kimi API
+    ${yellow("zhipu/*, glm-*")}          ${dim("->")} GLM API
+    ${yellow("poe:*")}                   ${dim("->")} Poe
+    ${yellow("anthropic/*, claude-*")}   ${dim("->")} Native Anthropic
+    ${yellow("(unknown vendor/)")}       ${dim("->")} Error (use openrouter@vendor/model)
 
-  Legacy syntax (deprecated, still works):
-    g/, gemini/      Google Gemini API      claudish --model g/gemini-2.0-flash "task"
-    oai/             OpenAI Direct API      claudish --model oai/gpt-4o "task"
-    mmax/, mm/       MiniMax Direct API     claudish --model mmax/MiniMax-M2.1 "task"
-    kimi/, moonshot/ Kimi Direct API        claudish --model kimi/kimi-k2-thinking-turbo "task"
-    ollama/          Ollama (local)         claudish --model ollama/llama3.2 "task"
-    http://...       Custom endpoint        claudish --model http://localhost:8000/model "task"
+  ${dim("A defaultProvider (config / --default-provider) catches bare names that match no rule.")}
 
-OPTIONS:
-  -i, --interactive        Run in interactive mode (default when no prompt given)
-  -m, --model <model>      OpenRouter model to use (required for single-shot mode)
-  -p, --profile <name>     Use named profile for model mapping (default: uses default profile)
-  --default-provider <name> Default provider for bare model names (builtin or customEndpoints key)
-                           Precedence: this flag > CLAUDISH_DEFAULT_PROVIDER env > config.json
-  --op-env <id>            Load env vars from a 1Password Environment (highest priority)
-                           Requires op CLI >= 2.35 (beta). Resolves op:// refs in config/env too.
-  --op <glob>              Load API keys from a 1Password item glob (e.g. op://Vault/Item/*/*_API_KEY)
-  --op <glob> --list       Preview which fields the glob would import (names only, no values)
-  --port <port>            Proxy server port (default: random)
-  -d, --debug              Enable debug logging to file (logs/claudish_*.log)
-  --no-logs                Disable always-on structural logging (~/.claudish/logs/)
-  --diag-mode <mode>       Diagnostic output: auto (default), logfile, off
-                           Also: CLAUDISH_DIAG_MODE env var or "diagMode" in config.json
-  --log-level <level>      Log verbosity: debug (full), info (truncated), minimal (labels only)
-  -q, --quiet              Suppress [claudish] log messages (default in single-shot mode)
-  -v, --verbose            Show [claudish] log messages (default in interactive mode)
-  --json                   Output in JSON format for tool integration (implies --quiet)
-  --stdin                  Read prompt from stdin (useful for large prompts or piping)
-  --free                   Show only FREE models in the interactive selector
-  --monitor                Monitor mode - proxy to REAL Anthropic API and log all traffic
-  --advisor "m1,m2[:collector]"  Multi-model advisor replacement (implies --monitor)
-  -y, --auto-approve       Skip permission prompts (--dangerously-skip-permissions)
-  --no-auto-approve        Explicitly enable permission prompts (default)
-  --dangerous              Pass --dangerouslyDisableSandbox to Claude Code
-  --cost-tracker           Enable cost tracking for API usage (NB!)
-  --audit-costs            Show cost analysis report
-  --reset-costs            Reset accumulated cost statistics
-  --list-models            Top 100 ranked models from Firebase + local providers
-  --list-models --provider <slug>
-                           Filter Firebase catalog to one provider
-                           (e.g. --provider opencode-zen, --provider anthropic)
-  --list-providers         List every provider + active-model count
-  -s, --search <query>     Search Firebase catalog by keyword — matches model ID,
-                           brand synonyms (chatgpt, claude, grok), gateway names
-                           (zen, oc, codex), or capabilities (reasoning, vision, free)
-  --top-models             List the curated recommended models (flagship + fast)
-  --team <models>          Run multiple models in parallel (comma-separated)
-                           Example: --team minimax-m2.5,kimi-k2.5 "prompt"
-  --mode <mode>            Team mode: default (grid), interactive, json
-  -f, --file <path>        Read prompt from file (use with --team or single-shot)
-  --probe <models...>      Probe each provider in the fallback chain with a real
-                           1-token request (diagnostic, may incur tiny cost)
-  --no-probe               Skip live requests, show static chain only
-  --probe-timeout <secs>   Per-link timeout for live probes (default: 40)
-  --json                   Output in JSON format (use with --list-models, --top-models, --probe)
-  --force-update           Force refresh the slim model catalog from Firebase
-                           (also clears per-cache files used by --top-models /
-                           --list-models; bypasses the launcher catalog TTL)
-  --skip-models-update     Skip the launcher catalog warm step entirely
-                           (use offline / when you trust the cached catalog)
-  --version                Show version information
-  -h, --help               Show this help message
-  --help-ai                Show AI agent usage guide (file-based patterns, sub-agents)
-  --init                   Install Claudish skill in current project (.claude/skills/)
-  --                       Separator: everything after passes directly to Claude Code
+${h("OPTIONS")}
+  ${green("-i, --interactive")}        Run in interactive mode (default when no prompt given)
+  ${green("-m, --model")} ${yellow("<model>")}      Model to use (required for single-shot mode)
+  ${green("--profile")} ${yellow("<name>")}         Use named profile for model mapping (default profile if omitted)
+  ${green("--default-provider")} ${yellow("<name>")} Fallback provider for bare model names (builtin or customEndpoints key)
+                           ${dim("Precedence: this flag > CLAUDISH_DEFAULT_PROVIDER env > config.json")}
+  ${green("--op")} ${yellow("<op://glob>")}         Load API keys from a 1Password item glob (SDK-based, no op CLI)
+  ${green("--op")} ${yellow("<glob>")} ${green("--list")}      Preview which fields the glob would import (names only, no values)
+  ${green("--op-env")} ${yellow("<id>")}            Load env vars from a 1Password Environment (highest priority)
+  ${green("--port")} ${yellow("<port>")}            Proxy server port (default: random)
+  ${green("-d, --log-debug")}          Enable debug logging to file (logs/claudish_*.log)
+  ${green("--log-off")}                Disable always-on structural logging (~/.claudish/logs/)
+  ${green("--log-diag")} ${yellow("<mode>")}        Diagnostic output: auto (default), logfile, off
+                           ${dim('Also: CLAUDISH_DIAG_MODE env var or "diagMode" in config.json')}
+  ${green("--log-level")} ${yellow("<level>")}      Log verbosity: debug (full), info (truncated), minimal (labels)
+  ${green("-q, --quiet")}              Suppress [claudish] log messages (default in single-shot mode)
+  ${green("-v, --verbose")}            Show [claudish] log messages (default in interactive mode)
+  ${green("--json")}                   Output JSON for tool integration (implies --quiet)
+  ${green("--stdin")}                  Read prompt from stdin (large prompts / piping)
+  ${green("--free")}                   Show only FREE models in the interactive selector
+  ${green("--monitor")}                Monitor mode - proxy to REAL Anthropic API and log traffic
+  ${green("--advisor")} ${yellow('"m1,m2[:collector]"')}  Multi-model advisor replacement (implies --monitor)
+  ${green("-y, --auto-approve")}       Skip permission prompts (--dangerously-skip-permissions)
+  ${green("--no-auto-approve")}        Explicitly enable permission prompts (default)
+  ${green("--dangerous")}              Pass --dangerouslyDisableSandbox to Claude Code
+  ${green("--cost-track")}             Enable cost tracking for API usage
+  ${green("--cost-audit")}             Show cost analysis report
+  ${green("--cost-reset")}             Reset accumulated cost statistics
+  ${green("--version")}                Show version information
+  ${green("-h, --help")}               Show this help message
+  ${green("--help-ai")}                Show AI agent usage guide (file-based patterns, sub-agents)
+  ${green("--init")}                   Install Claudish skill in current project (.claude/skills/)
+  ${green("--")}                       Separator: everything after passes directly to Claude Code
 
-CLAUDE CODE FLAG PASSTHROUGH:
-  Any unrecognized flag is automatically forwarded to Claude Code.
-  Claudish flags (--model, --stdin, --quiet, etc.) can appear in any order.
+${h("MODEL DISCOVERY")}
+  ${green("--models")}                              Top 100 ranked (Firebase + local providers)
+  ${green("--models --provider")} ${yellow("<slug>")}                Filter the catalog to one provider
+                                          ${dim("e.g. --provider opencode-zen, anthropic, openai")}
+  ${green("--providers")}                           Every provider + active-model count
+  ${green("-s, --models-search")} ${yellow("<query>")}             Fuzzy search: id, brand synonyms (chatgpt,
+                                          ${dim("claude, grok), gateways (zen, oc, codex), caps")}
+  ${green("--models-top")}                          Curated recommended models (flagship + fast)
+  ${green("--probe")} ${yellow("<models...>")}                    Probe each provider in the fallback chain with
+                                          ${dim("a real 1-token request (may incur tiny cost)")}
+  ${green("--no-probe")}                            Skip live requests, show static chain only
+  ${green("--probe-timeout")} ${yellow("<secs>")}                 Per-link timeout for live probes (default: 40)
+  ${green("--models-refresh")}                      Force refresh the slim model catalog from Firebase
+  ${green("--models-skip-update")}                  Skip the launcher catalog warm step (offline)
+  ${green("--json")}                                JSON output (with --models / --models-top / --probe)
 
-  Examples:
-    claudish --model grok --agent test "task"           # --agent passes to Claude Code
-    claudish --model grok --effort high --stdin "task"   # --effort passes, --stdin stays
-    claudish --model grok --permission-mode plan -i      # Works in interactive mode too
+${h("TEAM MODE")}
+  ${green("--team")} ${yellow("<models>")}           Run multiple models in parallel (comma-separated)
+                           ${dim('Example: --team minimax-m2.5,kimi-k2.5 "prompt"')}
+  ${green("--mode")} ${yellow("<mode>")}             Team mode: default (grid), interactive, json
+  ${green("-f, --file")} ${yellow("<path>")}         Read prompt from file (use with --team or single-shot)
 
-  Use -- when a Claude Code flag value starts with '-':
-    claudish --model grok -- --system-prompt "-verbose mode" "task"
+${h("MODEL MAPPING")} ${dim("(per-role override)")}
+  ${green("--model-opus")} ${yellow("<model>")}      Model for Opus role (planning, complex tasks)
+  ${green("--model-sonnet")} ${yellow("<model>")}    Model for Sonnet role (default coding)
+  ${green("--model-haiku")} ${yellow("<model>")}     Model for Haiku role (fast tasks, background)
+  ${green("--model-subagent")} ${yellow("<model>")}  Model for sub-agents (Task tool)
 
-PROFILE MANAGEMENT:
-  claudish init [--local|--global]            Setup wizard - create config and first profile
-  claudish profile list [--local|--global]    List all profiles (both scopes by default)
-  claudish profile add [--local|--global]     Add a new profile
-  claudish profile remove [name] [--local|--global]  Remove a profile
-  claudish profile use [name] [--local|--global]     Set default profile
-  claudish profile show [name] [--local|--global]    Show profile details
-  claudish profile edit [name] [--local|--global]    Edit a profile
+${h("SUBCOMMANDS")}
+  ${green("claudish config")}                        Open the interactive config TUI (profiles,
+                                          ${dim("providers, routing, 1Password)")}
+  ${green("claudish providers")} ${yellow("[--json]")}             Show provider credential status (no key material)
+  ${green("claudish quota")} ${yellow("[provider]")}              Show remaining quota/usage (alias: usage)
+  ${green("claudish serve")} ${yellow("--port <n> --models <p>")}  Run the Claude Desktop redirect gateway
+  ${green("claudish update")}                        Check for updates and install the latest version
 
-  Scope flags:
-    --local   Target .claudish.json in the current directory (project-specific)
-    --global  Target ~/.claudish/config.json (shared across projects)
-    (omit)    Prompted interactively; suggests local if in a project directory
+  ${bold("Profiles:")}
+    ${green("claudish init")} ${yellow("[--local|--global]")}        Setup wizard - create config + first profile
+    ${green("claudish profile list")} ${yellow("[scope]")}          List all profiles (both scopes by default)
+    ${green("claudish profile add")} ${yellow("[scope]")}           Add a new profile
+    ${green("claudish profile remove")} ${yellow("[name] [scope]")}  Remove a profile
+    ${green("claudish profile use")} ${yellow("[name] [scope]")}     Set default profile
+    ${green("claudish profile show")} ${yellow("[name] [scope]")}    Show profile details
+    ${green("claudish profile edit")} ${yellow("[name] [scope]")}    Edit a profile
+    ${dim("scope = --local (.claudish.json) | --global (~/.claudish/config.json) | (prompted)")}
 
-UPDATE:
-  claudish update          Check for updates and install latest version
+  ${bold("Authentication:")}
+    ${green("claudish login")} ${yellow("[provider]")}              Login to an OAuth provider (interactive if omitted)
+    ${green("claudish logout")} ${yellow("[provider]")}             Clear OAuth credentials
+    ${dim("Providers: gemini, kimi")}
 
-AUTHENTICATION:
-  claudish login [provider]   Login to an OAuth provider (interactive if no provider given)
-  claudish logout [provider]  Clear OAuth credentials (interactive if no provider given)
-                              Providers: gemini, kimi
+${h("1PASSWORD")} ${dim("(SDK-based — no op CLI needed for secrets)")}
+  ${dim("Auth via OP_SERVICE_ACCOUNT_TOKEN, or OP_ACCOUNT / onepasswordAccount config (DesktopAuth).")}
+  ${green("--op")} ${yellow("<glob> --list")}        Preview which fields a glob would import (names only)
+  ${green("--op")} ${yellow("<glob>")} ${yellow("[...args]")}      Resolve a glob into env vars, then run a session
+                           ${dim("Inline op import requires a GLOB (self-names via field labels)")}
+                           ${dim('Example: claudish --op "op://Jack/Keys/**" --model gpt-4o "task"')}
+  ${green("--op-env")} ${yellow("<id>")}             Load a 1Password Environment (highest-priority source)
+  ${dim("Persistent setup (single refs, sets, environments, account): claudish config -> 1Password tab")}
 
-1PASSWORD:
-  claudish op --list <op://glob>           Preview which fields a glob imports (names only)
-  claudish op <op://glob> [...claudish args]  Resolve glob into env vars, then run a session
-                                           Inline run requires a GLOB (self-names via field labels)
-                                           Example: claudish op 'op://Jack/Keys/*/*_API_KEY' --model gpt-4o "task"
+${h("CLAUDE CODE FLAG PASSTHROUGH")}
+  ${dim("Any unrecognized flag is forwarded to Claude Code. Claudish flags can appear in any order.")}
+    ${green("claudish")} --model grok ${yellow("--agent test")} ${yellow('"task"')}        ${dim("# --agent passes through")}
+    ${green("claudish")} --model grok ${yellow("--effort high")} --stdin ${yellow('"task"')}  ${dim("# --effort passes, --stdin stays")}
+    ${green("claudish")} --model grok ${yellow("--permission-mode plan")} -i   ${dim("# works in interactive too")}
+  ${dim("Use -- when a Claude Code flag value starts with '-':")}
+    ${green("claudish")} --model grok ${green("--")} ${yellow('--system-prompt "-verbose mode" "task"')}
 
-MODEL MAPPING (per-role override):
-  --model-opus <model>     Model for Opus role (planning, complex tasks)
-  --model-sonnet <model>   Model for Sonnet role (default coding)
-  --model-haiku <model>    Model for Haiku role (fast tasks, background)
-  --model-subagent <model> Model for sub-agents (Task tool)
+${h("CUSTOM MODELS & ENDPOINTS")}
+  ${dim("Claudish accepts ANY valid model ID from the Firebase catalog, even if not in --models:")}
+    ${green("claudish")} --model ${yellow("openrouter@your_provider/custom-model-123")} ${yellow('"task"')}
+  ${dim("Named custom endpoints live in ~/.claudish/config.json under 'customEndpoints' and route via @:")}
+    ${green("claudish")} --model ${yellow("my-vllm@llama3.1-70b")} ${yellow('"task"')}
 
-CUSTOM MODELS:
-  Claudish accepts ANY valid model ID from the Firebase catalog, even if not in --list-models
-  Example: claudish --model openrouter@your_provider/custom-model-123 "task"
+${h("MODES")}
+  ${green("•")} ${bold("Interactive")} ${dim("(default):")} shows model selector, starts a persistent session
+  ${green("•")} ${bold("Single-shot")} ${dim("(--model):")} runs one task headless and exits
 
-MODES:
-  • Interactive mode (default): Shows model selector, starts persistent session
-  • Single-shot mode: Runs one task in headless mode and exits (requires --model)
+${h("NOTES")}
+  ${yellow("•")} Permission prompts are ${bold("ENABLED")} by default (normal Claude Code behavior)
+  ${yellow("•")} Use ${green("-y")} / ${green("--auto-approve")} to skip permission prompts
+  ${yellow("•")} Model selector appears ONLY in interactive mode when ${green("--model")} not specified
+  ${yellow("•")} ${green("--dangerous")} disables the sandbox — use with extreme caution
 
-NOTES:
-  • Permission prompts are ENABLED by default (normal Claude Code behavior)
-  • Use -y or --auto-approve to skip permission prompts
-  • Model selector appears ONLY in interactive mode when --model not specified
-  • Use --dangerous to disable sandbox (use with extreme caution!)
+${h("ENVIRONMENT VARIABLES")}
+  ${dim("Claudish auto-loads a .env file from the current directory.")}
 
-ENVIRONMENT VARIABLES:
-  Claudish automatically loads .env file from current directory.
+  ${bold("Claude Code installation:")}
+  ${blue("CLAUDE_PATH")}                     Custom path to Claude Code binary
+                                  ${dim("Search: CLAUDE_PATH -> ~/.claude/local/claude -> PATH")}
 
-  Claude Code installation:
-  CLAUDE_PATH                     Custom path to Claude Code binary (optional)
-                                  Default search order:
-                                  1. CLAUDE_PATH env var
-                                  2. ~/.claude/local/claude (local install)
-                                  3. Global PATH (npm -g install)
+  ${bold("API keys")} ${dim("(at least one required for cloud models):")}
+  ${blue("OPENROUTER_API_KEY")}              OpenRouter (default backend)
+  ${blue("GEMINI_API_KEY")}                  Google Gemini ${dim("(g@, gemini@; alias GOOGLE_API_KEY)")}
+  ${blue("OPENAI_API_KEY")}                  OpenAI ${dim("(oai@)")}
+  ${blue("OPENAI_CODEX_API_KEY")}            OpenAI Codex / Responses API ${dim("(cx@, codex@)")}
+  ${blue("XAI_API_KEY")}                     xAI / Grok ${dim("(x-ai@, grok@)")}
+  ${blue("MINIMAX_API_KEY")}                 MiniMax ${dim("(mm@, mmax@)")}
+  ${blue("MINIMAX_CODING_API_KEY")}          MiniMax Coding Plan ${dim("(mmc@)")}
+  ${blue("MOONSHOT_API_KEY")}                Kimi / Moonshot ${dim("(kimi@, moon@; alias KIMI_API_KEY)")}
+  ${blue("KIMI_CODING_API_KEY")}             Kimi Coding Plan ${dim("(kc@)")}
+  ${blue("ZHIPU_API_KEY")}                   GLM / Zhipu ${dim("(glm@, zhipu@; alias GLM_API_KEY)")}
+  ${blue("GLM_CODING_API_KEY")}              GLM Coding Plan ${dim("(gc@; alias ZAI_CODING_API_KEY)")}
+  ${blue("ZAI_API_KEY")}                     Z.AI ${dim("(z-ai@, zai@)")}
+  ${blue("OLLAMA_API_KEY")}                  OllamaCloud ${dim("(oc@, llama@)")}
+  ${blue("OPENCODE_API_KEY")}                OpenCode Zen ${dim("(zen@; optional - free models work without it)")}
+  ${blue("POE_API_KEY")}                     Poe ${dim("(poe@)")}
+  ${blue("LITELLM_API_KEY")}                 LiteLLM ${dim("(litellm@, ll@; needs LITELLM_BASE_URL)")}
+  ${blue("VERTEX_API_KEY")}                  Vertex AI Express ${dim("(v@)")}
+  ${blue("VERTEX_PROJECT")}                  Vertex AI project ID ${dim("(OAuth mode, v@)")}
+  ${blue("VERTEX_LOCATION")}                 Vertex AI region ${dim("(default: us-central1)")}
+  ${blue("ANTHROPIC_API_KEY")}               Placeholder (prevents Claude Code dialog)
+  ${blue("ANTHROPIC_AUTH_TOKEN")}            Placeholder (prevents Claude Code login screen)
 
-  API Keys (at least one required for cloud models):
-  OPENROUTER_API_KEY              OpenRouter API key (default backend)
-  GEMINI_API_KEY                  Google Gemini API key (for g/ prefix)
-  VERTEX_API_KEY                  Vertex AI Express API key (for v/ prefix)
-  VERTEX_PROJECT                  Vertex AI project ID (OAuth mode, for v/ prefix)
-  VERTEX_LOCATION                 Vertex AI region (default: us-central1)
-  OPENAI_API_KEY                  OpenAI API key (for oai/ prefix)
-  MINIMAX_API_KEY                 MiniMax API key (for mmax/, mm/ prefix)
-  MOONSHOT_API_KEY                Kimi/Moonshot API key (for kimi/, moonshot/ prefix)
-  KIMI_API_KEY                    Alias for MOONSHOT_API_KEY
-  ZHIPU_API_KEY                   GLM/Zhipu API key (for glm/, zhipu/ prefix)
-  GLM_API_KEY                     Alias for ZHIPU_API_KEY
-  OLLAMA_API_KEY                  OllamaCloud API key (for oc/ prefix)
-  OPENCODE_API_KEY                OpenCode Zen API key (optional - free models work without it)
-  ANTHROPIC_API_KEY               Placeholder (prevents Claude Code dialog)
-  ANTHROPIC_AUTH_TOKEN            Placeholder (prevents Claude Code login screen)
+  ${bold("Custom / base-URL overrides:")}
+  ${blue("GEMINI_BASE_URL")}                 Custom Gemini endpoint
+  ${blue("OPENAI_BASE_URL")}                 Custom OpenAI / Azure endpoint
+  ${blue("MINIMAX_BASE_URL")}                Custom MiniMax endpoint
+  ${blue("MOONSHOT_BASE_URL")}               Custom Kimi / Moonshot endpoint ${dim("(alias KIMI_BASE_URL)")}
+  ${blue("ZHIPU_BASE_URL")}                  Custom GLM / Zhipu endpoint ${dim("(alias GLM_BASE_URL)")}
+  ${blue("LITELLM_BASE_URL")}                LiteLLM gateway base URL ${dim("(required for ll@)")}
+  ${blue("OLLAMACLOUD_BASE_URL")}            OllamaCloud ${dim("(default: https://ollama.com)")}
+  ${blue("OPENCODE_BASE_URL")}               OpenCode Zen ${dim("(default: https://opencode.ai/zen)")}
 
-  Custom endpoints:
-  GEMINI_BASE_URL                 Custom Gemini endpoint
-  OPENAI_BASE_URL                 Custom OpenAI/Azure endpoint
-  MINIMAX_BASE_URL                Custom MiniMax endpoint
-  MOONSHOT_BASE_URL               Custom Kimi/Moonshot endpoint
-  KIMI_BASE_URL                   Alias for MOONSHOT_BASE_URL
-  ZHIPU_BASE_URL                  Custom GLM/Zhipu endpoint
-  GLM_BASE_URL                    Alias for ZHIPU_BASE_URL
-  OLLAMACLOUD_BASE_URL            Custom OllamaCloud endpoint (default: https://ollama.com)
-  OPENCODE_BASE_URL               Custom OpenCode Zen endpoint (default: https://opencode.ai/zen)
+  ${bold("Local providers:")}
+  ${blue("OLLAMA_BASE_URL")}                 Ollama server ${dim("(default: http://localhost:11434; alias OLLAMA_HOST)")}
+  ${blue("LMSTUDIO_BASE_URL")}               LM Studio server ${dim("(default: http://localhost:1234)")}
+  ${blue("VLLM_BASE_URL")}                   vLLM server ${dim("(default: http://localhost:8000)")}
+  ${blue("MLX_BASE_URL")}                    MLX server ${dim("(default: http://127.0.0.1:8080)")}
 
-  Local providers:
-  OLLAMA_BASE_URL                 Ollama server (default: http://localhost:11434)
-  OLLAMA_HOST                     Alias for OLLAMA_BASE_URL
-  LMSTUDIO_BASE_URL               LM Studio server (default: http://localhost:1234)
-  VLLM_BASE_URL                   vLLM server (default: http://localhost:8000)
-  MLX_BASE_URL                    MLX server (default: http://127.0.0.1:8080)
+  ${bold("Claudish settings:")}
+  ${blue("CLAUDISH_MODEL")}                  Default model ${dim("(default: openai/gpt-5.3)")}
+  ${blue("CLAUDISH_DEFAULT_PROVIDER")}       Fallback provider for bare names ${dim("(see --default-provider)")}
+  ${blue("CLAUDISH_PORT")}                   Default proxy port
+  ${blue("CLAUDISH_CONTEXT_WINDOW")}         Override context window size
+  ${blue("CLAUDISH_DIAG_MODE")}              Diagnostic output: auto / logfile / off
+  ${blue("CLAUDISH_MCP_TOOLS")}              MCP tool gating: all / low-level / agentic / channel
+  ${blue("CLAUDISH_MODEL_OPUS")}             Override model for Opus role
+  ${blue("CLAUDISH_MODEL_SONNET")}           Override model for Sonnet role
+  ${blue("CLAUDISH_MODEL_HAIKU")}            Override model for Haiku role
+  ${blue("CLAUDISH_MODEL_SUBAGENT")}         Override model for sub-agents
+  ${blue("NO_COLOR")}                        Set to disable colored output
 
-  Model settings:
-  CLAUDISH_MODEL                  Default model to use (default: openai/gpt-5.3)
-  CLAUDISH_PORT                   Default port for proxy
-  CLAUDISH_CONTEXT_WINDOW         Override context window size
+  ${bold("1Password auth:")}
+  ${blue("OP_SERVICE_ACCOUNT_TOKEN")}        Service-account token (preferred for headless)
+  ${blue("OP_ACCOUNT")}                      Account URL for DesktopAuth ${dim("(e.g. my-team.1password.com)")}
 
-  Model mapping (per-role):
-  CLAUDISH_MODEL_OPUS             Override model for Opus role
-  CLAUDISH_MODEL_SONNET           Override model for Sonnet role
-  CLAUDISH_MODEL_HAIKU            Override model for Haiku role
-  CLAUDISH_MODEL_SUBAGENT         Override model for sub-agents
+${h("EXAMPLES")}
+  ${dim("# Interactive (default) - model selector")}
+  ${green("claudish")}
+  ${green("claudish")} --free                          ${dim("# only FREE models")}
 
-EXAMPLES:
-  # Interactive mode (default) - shows model selector
-  claudish
-  claudish --interactive
+  ${dim("# Explicit provider routing")}
+  ${green("claudish")} --model ${magenta("google@gemini-3-pro")} ${yellow('"implement auth"')}
+  ${green("claudish")} --model ${magenta("oai@gpt-5.3")} ${yellow('"add tests for login"')}
+  ${green("claudish")} --model ${magenta("openrouter@deepseek/deepseek-r1")} ${yellow('"unknown vendor"')}
 
-  # Interactive mode with only FREE models
-  claudish --free
+  ${dim("# Native auto-detection (provider inferred from model name)")}
+  ${green("claudish")} --model ${yellow("gpt-4o")} ${yellow('"routes to OpenAI"')}
+  ${green("claudish")} --model ${yellow("gemini-2.5-pro")} ${yellow('"routes to Google"')}
 
-  # New @ syntax - explicit provider routing
-  claudish --model google@gemini-3-pro "implement user authentication"
-  claudish --model openrouter@openai/gpt-5.3 "add tests for login"
-  claudish --model oai@gpt-5.3 "direct to OpenAI"
+  ${dim("# Per-role model mapping")}
+  ${green("claudish")} --model-opus ${magenta("oai@gpt-5.3")} --model-sonnet ${magenta("google@gemini-3-pro")}
 
-  # Native model auto-detection (provider detected from model name)
-  claudish --model gpt-4o "routes to OpenAI API (detected from model name)"
-  claudish --model llama-3.1-70b "routes to OllamaCloud (detected)"
-  claudish --model openrouter@deepseek/deepseek-r1 "explicit OpenRouter for unknown vendors"
+  ${dim("# stdin for large prompts (diffs, code review)")}
+  ${dim("git diff |")} ${green("claudish")} --stdin --model ${magenta("oai@gpt-5.3")} ${yellow('"Review these changes"')}
 
-  # Direct Gemini API (multiple ways)
-  claudish --model google@gemini-2.0-flash "explicit Google"
-  claudish --model g@gemini-2.0-flash "shortcut"
-  claudish --model gemini-2.5-pro "auto-detected from model name"
+  ${dim("# Local models with concurrency control")}
+  ${green("claudish")} --model ${magenta("ollama@llama3.2:3")} ${yellow('"3 concurrent requests"')}
+  ${green("claudish")} --model ${magenta("lms@qwen2.5-coder")} ${yellow('"LM Studio shortcut"')}
+  ${green("claudish")} --model ${yellow('"http://localhost:8000/mistral"')} ${yellow('"any OpenAI-compatible URL"')}
 
-  # Vertex AI (Google Cloud - supports Google + partner models)
-  VERTEX_API_KEY=... claudish --model v@gemini-2.5-flash "Express mode"
-  VERTEX_PROJECT=my-project claudish --model vertex@gemini-2.5-flash "OAuth mode"
+  ${dim("# Autonomous (no prompts, no sandbox) — use with caution")}
+  ${green("claudish")} -y --dangerous ${yellow('"refactor entire codebase"')}
 
-  # Direct OpenAI API
-  claudish --model oai@gpt-4o "implement feature"
-  claudish --model oai@o1 "complex reasoning"
-
-  # Direct MiniMax API
-  claudish --model mm@MiniMax-M2.1 "implement feature"
-  claudish --model mmax@MiniMax-M2 "code review"
-
-  # Direct Kimi API (with reasoning support)
-  claudish --model kimi@kimi-k2-thinking-turbo "complex analysis"
-
-  # Direct GLM API
-  claudish --model glm@glm-4.7 "code generation"
-
-  # OpenCode Zen (free models)
-  claudish --model zen@grok-code "implement feature"
-
-  # Local models with concurrency control
-  claudish --model ollama@llama3.2 "default sequential (1 at a time)"
-  claudish --model ollama@llama3.2:3 "allow 3 concurrent requests"
-  claudish --model ollama@llama3.2:0 "no limits (bypass queue)"
-  claudish --model lms@qwen2.5-coder "LM Studio shortcut"
-
-  # Per-role model mapping (works with all syntaxes)
-  claudish --model-opus oai@gpt-5.3 --model-sonnet google@gemini-3-pro --model-haiku mm@MiniMax-M2.1
-
-  # Use stdin for large prompts (e.g., git diffs, code review)
-  echo "Review this code..." | claudish --stdin --model g@gemini-2.0-flash
-  git diff | claudish --stdin --model oai@gpt-5.3 "Review these changes"
-
-  # Monitor mode - understand how Claude Code works
-  claudish --monitor --debug "analyze code structure"
-
-  # Skip permission prompts (auto-approve)
-  claudish -y "make changes to config"
-  claudish --auto-approve "refactor the function"
-
-  # Dangerous mode (disable sandbox - use with extreme caution)
-  claudish --dangerous "refactor entire codebase"
-
-  # Both flags (fully autonomous - no prompts, no sandbox)
-  claudish -y --dangerous "refactor entire codebase"
-
-  # With custom port
-  claudish --port 3000 "analyze code structure"
-
-  # Pass flags to claude
-  claudish --model openrouter@x-ai/grok-code-fast-1 --verbose "debug issue"
-
-  # JSON output for tool integration (quiet by default)
-  claudish --json "list 5 prime numbers"
-
-  # Verbose mode in single-shot (show [claudish] logs)
-  claudish --verbose "analyze code structure"
-
-LOCAL MODELS (Ollama, LM Studio, vLLM):
-  # Use local Ollama model (prefix syntax)
-  claudish --model ollama/llama3.2 "implement feature"
-  claudish --model ollama:codellama "review this code"
-
-  # Use local LM Studio model
-  claudish --model lmstudio/qwen2.5-coder "write tests"
-
-  # Use any OpenAI-compatible endpoint (URL syntax)
-  claudish --model "http://localhost:11434/llama3.2" "task"
-  claudish --model "http://192.168.1.100:8000/mistral" "remote server"
-
-  # Custom Ollama endpoint
-  OLLAMA_BASE_URL=http://192.168.1.50:11434 claudish --model ollama/llama3.2 "task"
-  OLLAMA_HOST=http://192.168.1.50:11434 claudish --model ollama/llama3.2 "task"
-
-AVAILABLE MODELS:
-  Top 100 ranked:      claudish --list-models                 (Firebase-ranked list + local providers)
-  By provider:         claudish --list-models --provider <slug>  (e.g. opencode-zen, anthropic, openai, google, x-ai)
-  All providers:       claudish --list-providers              (every provider + active-model count)
-  Search models:       claudish -s <query>                    (fuzzy: id, brand synonyms, gateways, capabilities)
-  Top recommended:     claudish --top-models                  (curated flagship + fast)
-  Probe routing:       claudish --probe minimax-m2.5 kimi-k2.5 gemini-3.1-pro-preview
-  Free models only:    claudish --free                        (interactive selector with free models)
-  JSON output:         claudish --list-models --json | claudish --top-models --json
-
-MORE INFO:
-  GitHub: https://github.com/MadAppGang/claude-code
-  OpenRouter: https://openrouter.ai
+${h("MORE INFO")}
+  ${dim("GitHub:")}     ${blue("https://github.com/MadAppGang/claude-code")}
+  ${dim("OpenRouter:")} ${blue("https://openrouter.ai")}
 `);
 }
 
@@ -2284,7 +2227,7 @@ function printAvailableModels(): void {
   try {
     const basicModels = getAvailableModels();
     const modelInfo = loadModelInfo();
-    console.log("\nAvailable models (type `claudish --top-models` for full table):\n");
+    console.log("\nAvailable models (type `claudish --models-top` for full table):\n");
     for (const model of basicModels) {
       const info = modelInfo[model];
       if (!info) continue;
