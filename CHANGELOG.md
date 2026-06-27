@@ -6,21 +6,11 @@ All notable changes to [Claudish](https://github.com/MadAppGang/claudish).
 
 ### Bug Fixes
 
-This is a fast-follow to 7.8.0, fixing credential-resolution regressions from the new credential authority plus several `claudish config` Providers-tab issues surfaced by "Test All" (`T`).
+- v7.8.1 — credential-authority regressions + config Providers fixes([`3f8806e`](https://github.com/MadAppGang/claudish/commit/3f8806ed7b2dc97b63d29b4a139429fddae8a2ee))
 
-- **Kimi Coding sent the wrong key (401).** `kimi-coding` was registered as an alias of the regular Kimi credential, so its coding-plan endpoint (`api.kimi.com/coding`) received the regular Moonshot key (`MOONSHOT_API_KEY` / `KIMI_API_KEY`) instead of its own `KIMI_CODING_API_KEY` → guaranteed 401. It now has its own credential, keyed on `KIMI_CODING_API_KEY` first, sharing only the `claudish login kimi` OAuth flow. This fixed real `kc@` routing, not just the probe.
+### Documentation
 
-- **Alias env vars resolved to the variable NAME, not its value.** `ApiKeyCredentialProvider` used `aliases.find(a => process.env[a])`, which returns the matching alias *name* string (e.g. `"GLM_API_KEY"`), and that truthy garbage short-circuited resolution — so any provider configured via its alias (GLM via `GLM_API_KEY`, GLM Coding via `ZAI_CODING_API_KEY`, OpenCode Zen Go via `OPENCODE_API_KEY`) sent the literal env-var name as the API key → 401. Now resolves the alias's value.
-
-- **Direct Gemini falsely showed "ready", then 401'd.** A user with `claudish login gemini` (Code Assist OAuth) but no `GEMINI_API_KEY` saw the **direct** Gemini row marked ready, because its catalog name (`google`) aliases onto the Code Assist OAuth credential. The config TUI no longer treats an OAuth alias as readiness for an API-key-only provider.
-
-- **OpenCode Zen showed "ready" under "— not configured —".** A keyless/free provider (`publicKeyFallback`) was sorted/probed as ready but rendered under the not-configured divider with a hollow dot and blank key. The Providers tab now recognizes a `public` credential source, so the divider, status dot, and KEY column (now showing `free`) all agree.
-
-- **Running local servers were invisible; stopped ones timed out.** Local providers (Ollama, LM Studio, vLLM, MLX) are now liveness-checked: a running server shows `running` (and a detected-but-not-enabled one shows `running · off` and is testable), while an enabled-but-stopped server is fast-failed with "not running" instead of a 15s "operation timed out".
-
-- **`claudish config` Providers detail showed "From: env" for 1Password keys.** Keys hydrated from 1Password into the environment at startup were indistinguishable from real shell env vars. Their origin is now tracked, so the detail pane shows `From: 1Password` (and `--probe` / debug provenance report `1Password` too).
-
-- **Stale test badges persisted after fixing a credential.** A red `FAIL` (or green `ready Xms`) lingered after saving or removing a key/URL. The badge is now cleared on each credential change.
+- update CHANGELOG.md for v7.8.0([`a26551d`](https://github.com/MadAppGang/claudish/commit/a26551d0e04c3e63b0cfe36cb60e76b779d3d75e))
 
 ## [7.8.0] - 2026-06-27
 
