@@ -2,7 +2,15 @@
 
 All notable changes to [Claudish](https://github.com/MadAppGang/claudish).
 
-## [Unreleased]
+## [7.8.0] - 2026-06-27
+
+### New Features
+
+- **Unified credential authority.** All credential resolution — API keys, 1Password-backed keys, OAuth (Codex / Gemini Code Assist / Kimi), Vertex, and local providers — now flows through one `CredentialProvider` abstraction with per-provider implementations behind it (`packages/cli/src/auth/credentials/`). The interface is four methods: `isAuthenticated()` (sync), `getRequestAuth()` (async — returns `{headers, endpoint?, transformPayload?}`), `login()`/`logout()`. The OAuth transports no longer read `~/.claudish/*-oauth.json` themselves or build provider-specific headers — they delegate to `credentials.getRequestAuth()`, which mints the right artifact per provider (Codex's endpoint switch + account-id headers, Gemini's request envelope + project/tier, Kimi's platform headers, all with token refresh handled inside). The readiness oracle (`hasCredentialsForProvider`, the config Providers screen) and the api-key construction path route through the one authority too, pinned by a hermetic equivalence matrix proving identical behavior to the old scattered checks. Per-provider OAuth divergence lives in each implementation, wrapping the existing OAuth singletons — none rewritten.
+
+### Bug Fixes
+
+- `claudish config` → Providers now shows your 1Password-backed keys instead of "not set". The config TUI resolves all configured `op://` sources (refs + globs) into the environment up front before rendering, so the screen's synchronous "has a key?" reads reflect the real keys. Zero-cost no-op when no 1Password is configured.
 
 ### Breaking Changes
 
