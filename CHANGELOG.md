@@ -6,7 +6,7 @@ All notable changes to [Claudish](https://github.com/MadAppGang/claudish).
 
 ### Bug Fixes
 
-- **A running local server showed STATUS `running` but was filed under "— not configured —".** Follow-up to the 7.8.1 local-liveness work: the liveness ping made a started-but-not-enabled local (e.g. Ollama on :11434) report `running`, but the section divider, status dot, and sort still keyed off config-enabled only — so the row showed "running" while sitting below the divider with a hollow dot. Display-readiness now counts a running local as ready (a new shared `providerIsReadyForDisplay`), so the divider, dot, and "configured first" sort all agree with the status — the same source-vs-readiness fix applied to keyless providers in 7.8.1. (The detail status still distinguishes `running` from `running · off` so you can tell a server is up but not yet enabled.)
+- v7.8.2 — running local shown 'running' was filed under 'not configured'([`b41f2ec`](https://github.com/MadAppGang/claudish/commit/b41f2ecbd90838fa429bbb8a97a571859b829e63))
 
 ## [7.8.1] - 2026-06-27
 
