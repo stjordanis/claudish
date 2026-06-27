@@ -2,6 +2,12 @@
 
 All notable changes to [Claudish](https://github.com/MadAppGang/claudish).
 
+## [7.8.3] - 2026-06-27
+
+### Bug Fixes
+
+- **A local server that's off, or has no chat model, no longer shows a red FAIL.** In `claudish config` → Providers "Test All", an LM Studio that isn't running ("not running (http://localhost:1234)") and an Ollama with only embedding models pulled ("no probe model: only embedding/non-chat models") were both shown as red **FAIL** — alarming, even though neither is a failure of claudish or your config (the server is simply off, or there's nothing chat-able to probe). These now report a neutral **"n/a" / "unavailable"** state (yellow, with the explanation inline) via a new `unavailable` test-result status. A genuine remote-provider error still shows red FAIL.
+
 ## [7.8.2] - 2026-06-27
 
 ### Bug Fixes

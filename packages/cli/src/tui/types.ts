@@ -72,7 +72,16 @@ export interface ProbeEntry {
 }
 
 export interface TestResult {
-  status: "testing" | "valid" | "failed";
+  /**
+   * - "testing"     — probe in flight
+   * - "valid"       — endpoint reachable + a model responded
+   * - "failed"      — a real failure (auth/network/bad config) → red
+   * - "unavailable" — expected, NOT a failure: local server not running, or no
+   *                   probe-able model exists (e.g. only embedding models). Shown
+   *                   neutral (dim/yellow), not red — claudish/config are fine,
+   *                   there's just nothing to test right now.
+   */
+  status: "testing" | "valid" | "failed" | "unavailable";
   error?: string;
   ms?: number;
   /** Optional annotation when status is "valid" but the endpoint reported a

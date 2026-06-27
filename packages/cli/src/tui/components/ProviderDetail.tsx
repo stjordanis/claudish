@@ -252,6 +252,18 @@ export function ProviderDetail({
               )}
             </>
           )}
+          {tr.status === "unavailable" && (
+            <>
+              {/* Not a failure — the server is off or has no chat model to probe.
+                  Neutral yellow, not red. */}
+              <span fg={C.yellow} attributes={A.bold}>
+                {"○ unavailable"}
+              </span>
+              {tr.error && (
+                <span fg={C.yellow}>{`  ${truncateOneLine(tr.error, width - 16)}`}</span>
+              )}
+            </>
+          )}
         </text>
       )}
     </box>

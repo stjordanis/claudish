@@ -172,6 +172,12 @@ export function ProvidersContent({
         statusFg = C.green;
         const base = tr.ms !== undefined ? `ready ${tr.ms}ms` : "ready";
         statusText = tr.note ? `${base} ${tr.note}` : base;
+      } else if (tr.status === "unavailable") {
+        // Expected, not a failure (local server off, or no chat model to probe).
+        // Neutral yellow + a short word, with the detail shown in the message
+        // column — never red FAIL.
+        statusFg = C.yellow;
+        statusText = "n/a";
       } else {
         statusFg = C.red;
         statusText = "FAIL";
@@ -275,12 +281,16 @@ export function ProvidersContent({
               tui/index.tsx → setStderrQuiet), and the error data lives in
               testResults[p.name].error instead.
             */}
-            {/* Description column doubles as inline error surface when a test
-                failed. We collapse whitespace to a single line, but DON'T
+            {/* Description column doubles as inline message surface when a test
+                produced a result. A real failure is red; an "unavailable" result
+                (server off / no chat model) is neutral yellow — informative, not
+                alarming. We collapse whitespace to a single line, but DON'T
                 pre-compute truncation width — the row's height={1} + the
                 container's overflow="hidden" let OpenTUI clip naturally. */}
             {tr?.status === "failed" && tr.error ? (
               <span fg={C.red}>{tr.error.replace(/\s+/g, " ").trim()}</span>
+            ) : tr?.status === "unavailable" && tr.error ? (
+              <span fg={C.yellow}>{tr.error.replace(/\s+/g, " ").trim()}</span>
             ) : (
               <span fg={selected ? C.white : C.dim}>{p.description}</span>
             )}

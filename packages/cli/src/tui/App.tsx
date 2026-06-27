@@ -918,10 +918,12 @@ export function App({ requestLogin }: AppProps = {}) {
       const live = await pingLocalProvider(prov.catalogName);
       if (live === "down") {
         const base = localBaseUrl(prov.catalogName);
+        // "not running" is NOT a failure — the server is simply off. Show it
+        // neutral (unavailable), not red FAIL.
         setTestResults((prev) => ({
           ...prev,
           [provName]: {
-            status: "failed",
+            status: "unavailable",
             error: `not running${base ? ` (${base} unreachable)` : ""}`,
           },
         }));
@@ -1023,11 +1025,15 @@ export function App({ requestLogin }: AppProps = {}) {
 
       const ms = Date.now() - startMs;
       if (!lastResult) {
-        // Discovery never produced even one model.
+        // Discovery never produced even one model. For a LOCAL server this is
+        // usually "only embedding / non-chat models pulled" — the server is up
+        // and claudish is fine, there's just nothing chat-able to probe, so it's
+        // unavailable (neutral), not a FAIL. For a remote provider, an empty
+        // model list is a genuine problem → failed.
         setTestResults((prev) => ({
           ...prev,
           [provName]: {
-            status: "failed",
+            status: prov.isLocal ? "unavailable" : "failed",
             error: lastDiscoveryReason
               ? `no probe model: ${lastDiscoveryReason}`
               : "no probe model available",
