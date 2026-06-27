@@ -1,16 +1,11 @@
-import { hasOAuthCredentials } from "../auth/oauth-registry.js";
-import { isLocalProviderEnabled, loadConfig, loadLocalConfig } from "../profile-config.js";
+import { credentials } from "../auth/credentials/authority.js";
+import { loadConfig, loadLocalConfig } from "../profile-config.js";
 import type { RoutingEntry, RoutingRules } from "../profile-config.js";
 import { DISPLAY_NAMES, PROVIDER_TO_PREFIX } from "./auto-route.js";
 import { DEFAULT_ROUTING_RULES } from "./default-routing-rules.js";
 import { resolveModelNameSync } from "./model-catalog-resolver.js";
 import { PROVIDER_SHORTCUTS } from "./model-parser.js";
 import { parseModelSpec } from "./model-parser.js";
-import {
-  getProviderByName,
-  isLocalTransport,
-  isProviderAvailable,
-} from "./provider-definitions.js";
 import { buildCredentialHint } from "./routing-hints.js";
 
 /**
@@ -164,9 +159,7 @@ function globMatch(pattern: string, value: string): boolean {
   if (star === -1) return p === v;
   const prefix = p.slice(0, star);
   const suffix = p.slice(star + 1);
-  return (
-    v.startsWith(prefix) && v.endsWith(suffix) && v.length >= prefix.length + suffix.length
-  );
+  return v.startsWith(prefix) && v.endsWith(suffix) && v.length >= prefix.length + suffix.length;
 }
 
 // ---------------------------------------------------------------------------
@@ -200,50 +193,23 @@ export type RoutePlan =
 /**
  * Check whether the user has credentials for a given canonical provider.
  *
- * Special-cases beyond `isProviderAvailable()`:
- *   - `native-anthropic` declares an empty `apiKeyEnvVar`, which would make
- *     `isProviderAvailable()` return true unconditionally. We require an
- *     explicit `ANTHROPIC_API_KEY` (or `ANTHROPIC_AUTH_TOKEN`) before
- *     considering it routable.
- *   - `openai-codex` declares `OPENAI_API_KEY` as an alias, but the codex
- *     `/v1/responses` endpoint requires the codex subscription — sending a
- *     plain OpenAI key produces "instructions are required" 400 errors. For
- *     routing we require the codex-specific env var or the OAuth file.
- *   - Local transports (ollama, lmstudio, vllm, mlx) must be explicitly
- *     enabled in global config.
- *   - OAuth-backed providers (kimi, gemini-codeassist) are considered
- *     credentialed if either an OAuth file or env var is present.
+ * Delegates to the credential authority's sync readiness oracle. The authority's
+ * per-provider impls replicate every special case this function used to inline:
+ *   - `native-anthropic` requires an explicit ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN
+ *     (NativeAnthropicCredentialProvider).
+ *   - `openai-codex` requires its codex-specific key or OAuth — the OPENAI_API_KEY
+ *     alias is excluded (the Codex composite's API-key half has no aliases).
+ *   - Local transports (ollama, lmstudio, vllm, mlx) require explicit enablement
+ *     (LocalCredentialProvider → isLocalProviderEnabled).
+ *   - OAuth-backed providers (kimi, gemini-codeassist) accept an OAuth file or env
+ *     key; publicKeyFallback / oauthFallback affordances are honored by the
+ *     ApiKeyCredentialProvider.
+ *
+ * Equivalence with the previous inline logic is pinned by
+ * auth/credentials/equivalence.test.ts.
  */
-function hasCredentialsForProvider(provider: string): boolean {
-  if (isLocalTransport(provider)) return isLocalProviderEnabled(provider);
-
-  if (provider === "native-anthropic") {
-    return !!process.env.ANTHROPIC_API_KEY || !!process.env.ANTHROPIC_AUTH_TOKEN;
-  }
-
-  // openai-codex requires its own subscription credential. The OPENAI_API_KEY
-  // alias defined in provider-definitions.ts is for the proxy's auth header
-  // when the codex sub IS active — it is NOT a signal that the user has the
-  // codex sub. Without this guard, users with only OPENAI_API_KEY route
-  // through codex's /v1/responses endpoint and hit "instructions required"
-  // 400 errors before reaching the direct openai fallback.
-  if (provider === "openai-codex") {
-    if (process.env.OPENAI_CODEX_API_KEY) return true;
-    if (hasOAuthCredentials(provider)) return true;
-    return false;
-  }
-
-  if (hasOAuthCredentials(provider)) return true;
-
-  const def = getProviderByName(provider);
-  if (!def) return false;
-
-  // Reject providers with no apiKeyEnvVar AND no public/local affordance.
-  // `isProviderAvailable` returns true for these, but routing-wise they are
-  // unreachable without explicit credentials wired elsewhere.
-  if (!def.apiKeyEnvVar && !def.publicKeyFallback && !def.isLocal) return false;
-
-  return isProviderAvailable(def);
+export function hasCredentialsForProvider(provider: string): boolean {
+  return credentials.isAuthenticated(provider);
 }
 
 /**

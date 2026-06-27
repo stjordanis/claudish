@@ -672,8 +672,21 @@ if (isMcpMode) {
     return stats.handleStatsCommand(subcommand);
   });
 } else if (isConfigCommand) {
-  // Interactive configuration TUI: claudish config (full-screen btop-inspired TUI)
-  import("./tui/index.js").then((m) => m.startConfigTui().catch(handlePromptExit));
+  // Interactive configuration TUI: claudish config (full-screen btop-inspired TUI).
+  //
+  // Resolve ALL configured 1Password sources ONCE up front (unfiltered — no
+  // neededEnvVars) so the Providers screen's SYNCHRONOUS "does this provider have
+  // a key?" reads see the real keys. A 1Password GLOB (op://Vault/Item/**) hides
+  // which env vars it contains until resolved, so without this every op://-backed
+  // provider shows "not set". hydrateOpSecrets() with no arg resolves every single
+  // op:// ref + glob into process.env (the same path --mcp/serve use); it's gated
+  // by opHydrated (at most once) and is a zero-cost no-op when no 1Password is
+  // configured. After it resolves, the TUI's sync reads reflect the keys; the
+  // OpenTUI render re-runs naturally once this await completes before mount.
+  import("./tui/index.js").then(async (m) => {
+    await hydrateOpSecrets();
+    return m.startConfigTui().catch(handlePromptExit);
+  });
 } else {
   // CLI mode
   runCli();

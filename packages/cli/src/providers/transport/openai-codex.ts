@@ -3,123 +3,73 @@
  *
  * Extends OpenAI transport with OAuth token support for ChatGPT Plus/Pro subscriptions.
  *
- * On each request, checks for OAuth credentials (~/.claudish/codex-oauth.json).
- * If found, uses the OAuth access_token + ChatGPT-Account-ID header.
- * Falls back to API key (OPENAI_CODEX_API_KEY) if no OAuth credentials.
+ * The transport no longer manages OAuth itself. On each request, composed-handler
+ * calls refreshAuth() (BEFORE transformPayload/getEndpoint/getHeaders), which
+ * delegates to the credential authority's getRequestAuth("openai-codex"). The
+ * authority's Codex credential mints the OAuth artifact (chatgpt.com endpoint +
+ * OAuth headers + store:false/include payload transform), and applies the
+ * OPENAI_CODEX_API_KEY fallback internally. When OAuth is unavailable the authority
+ * throws/falls through, cachedAuth stays null, and the transport uses the plain
+ * api-key path (api.openai.com + Bearer key) from the OpenAI base transport.
  *
- * IMPORTANT: When using OAuth tokens, requests go to chatgpt.com/backend-api, NOT api.openai.com
- * The OAuth token only works with ChatGPT's internal API.
+ * IMPORTANT: OAuth tokens only work with chatgpt.com/backend-api, NOT api.openai.com.
  */
 
-import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
-import { log } from "../../logger.js";
 import { OpenAIProviderTransport } from "./openai.js";
-import { CodexOAuth } from "../../auth/codex-oauth.js";
+import { credentials } from "../../auth/credentials/authority.js";
+import type { RequestAuth } from "../../auth/credentials/types.js";
 import { normalizeCodexModel } from "../../adapters/codex-api-format.js";
 
-function buildOAuthHeaders(token: string, accountId?: string): Record<string, string> {
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${token}`,
-    "OpenAI-Beta": "responses=experimental",
-    originator: "codex_cli_rs",
-    accept: "text/event-stream",
-  };
-  if (accountId) {
-    headers["chatgpt-account-id"] = accountId;
-    // Add conversation/session headers for stateless operation
-    headers["x-conversation-id"] = "claudish-session";
-    headers["x-session-id"] = "claudish-session";
-  }
-  return headers;
-}
-
-/** Base URL for ChatGPT Codex backend API (used with OAuth tokens) */
-const CHATGPT_API_URL = "https://chatgpt.com/backend-api/codex";
-
 export class OpenAICodexTransport extends OpenAIProviderTransport {
+  /**
+   * The per-request auth artifact, populated by refreshAuth() (called before
+   * getEndpoint/getHeaders/transformPayload). Null when OAuth is unavailable —
+   * the transport then falls back to the OpenAI base transport's api-key path.
+   */
+  private cachedAuth: RequestAuth | null = null;
+
+  /**
+   * Resolve OAuth (or fall through to api-key) via the credential authority and
+   * cache the artifact. composed-handler calls this before getEndpoint/getHeaders.
+   * The Codex credential ignores ctx.model, so "" is fine.
+   */
+  async refreshAuth(): Promise<void> {
+    try {
+      this.cachedAuth = await credentials.getRequestAuth("openai-codex", { model: "" });
+    } catch {
+      // No OAuth (or refresh failed) → use the api-key path below.
+      this.cachedAuth = null;
+    }
+  }
+
+  /**
+   * OAuth tokens only work with chatgpt.com/backend-api (endpoint comes from the
+   * cached auth artifact). API keys use the standard OpenAI endpoint (super).
+   */
+  override getEndpoint(_targetModel?: string): string {
+    return this.cachedAuth?.endpoint ?? super.getEndpoint();
+  }
+
   override async getHeaders(): Promise<Record<string, string>> {
-    const oauthHeaders = await this.tryOAuthHeaders();
-    if (oauthHeaders) return oauthHeaders;
-    // Fall back to API key auth
+    if (this.cachedAuth) return { ...this.cachedAuth.headers };
+    // Fall back to API key auth (Bearer <OPENAI_CODEX_API_KEY>).
     return super.getHeaders();
   }
 
   /**
-   * Override endpoint to use ChatGPT API when OAuth credentials exist.
-   * OAuth tokens only work with chatgpt.com/backend-api, not api.openai.com.
-   * API keys use the standard OpenAI API endpoint.
-   */
-  getEndpoint(): string {
-    // Check if OAuth credentials exist (synchronous check)
-    const credPath = join(homedir(), ".claudish", "codex-oauth.json");
-    if (existsSync(credPath)) {
-      try {
-        const creds = JSON.parse(readFileSync(credPath, "utf-8"));
-        if (creds.access_token && creds.refresh_token) {
-          // OAuth tokens work with chatgpt.com/backend-api
-          return `${CHATGPT_API_URL}/responses`;
-        }
-      } catch {
-        // Fall through to API key
-      }
-    }
-    // API keys use the standard OpenAI API endpoint
-    return `${this.provider.baseUrl}${this.provider.apiPath}`;
-  }
-
-  /**
-   * Attempt to load OAuth credentials and return headers.
-   * Returns null if no valid OAuth credentials are available.
-   */
-  private async tryOAuthHeaders(): Promise<Record<string, string> | null> {
-    const credPath = join(homedir(), ".claudish", "codex-oauth.json");
-    if (!existsSync(credPath)) return null;
-
-    try {
-      const creds = JSON.parse(readFileSync(credPath, "utf-8"));
-      if (!creds.access_token || !creds.refresh_token) return null;
-
-      // Check if token needs refresh
-      const buffer = 5 * 60 * 1000;
-      if (creds.expires_at && Date.now() > creds.expires_at - buffer) {
-        const oauth = CodexOAuth.getInstance();
-        const token = await oauth.getAccessToken();
-        log("[OpenAI Codex] Using refreshed OAuth token");
-        return buildOAuthHeaders(token, oauth.getAccountId());
-      }
-
-      // Token still valid
-      log("[OpenAI Codex] Using OAuth token (subscription)");
-      return buildOAuthHeaders(creds.access_token, creds.account_id);
-    } catch (e) {
-      log(`[OpenAI Codex] OAuth credential read failed: ${e}, falling back to API key`);
-      return null;
-    }
-  }
-
-  /**
-   * Transform the request payload to normalize the model name for ChatGPT backend.
-   * The ChatGPT backend doesn't recognize OpenAI model names like "gpt-4.5" -
-   * it only knows ChatGPT-specific model names like "gpt-5.1", "gpt-5.2-codex", etc.
+   * Normalize the model name for the ChatGPT backend (a pure, non-auth transform —
+   * the ChatGPT backend only knows ChatGPT-specific model names like "gpt-5.1").
+   * The auth-derived bits (store:false / include reasoning) come from the cached
+   * auth artifact's transformPayload, applied only when OAuth is active.
    */
   transformPayload(payload: any): any {
-    log(`[OpenAI Codex] transformPayload called - payload.model: "${payload?.model}"`);
     if (payload?.model) {
       const normalized = normalizeCodexModel(payload.model);
       if (normalized !== payload.model) {
-        log(`[OpenAI Codex] Normalized model: ${payload.model} → ${normalized}`);
         payload = { ...payload, model: normalized };
       }
     }
-    // Add Codex-specific fields that the opencode reference implementation uses
-    // store: false = stateless operation (required by ChatGPT backend for Codex)
-    // include: reasoning.encrypted_content = for reasoning continuity across turns
-    return {
-      ...payload,
-      store: false,
-      include: ["reasoning.encrypted_content"],
-    };
+    // Auth-derived store:false / include reasoning bits, only under OAuth.
+    return this.cachedAuth?.transformPayload?.(payload) ?? payload;
   }
 }

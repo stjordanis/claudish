@@ -3,6 +3,7 @@
  * Derived from BUILTIN_PROVIDERS — single source of truth.
  */
 
+import { credentials } from "../auth/credentials/authority.js";
 import { hasOAuthCredentials } from "../auth/oauth-registry.js";
 import { isLocalProviderEnabled } from "../profile-config.js";
 import { getAllProviders, type ProviderDefinition } from "../providers/provider-definitions.js";
@@ -80,7 +81,7 @@ export type AuthSource = "e+c" | "env" | "cfg" | "oauth" | "local" | null;
 
 export function providerAuthSource(
   p: ProviderDef,
-  config: { apiKeys?: Record<string, string>; localProviders?: string[] },
+  config: { apiKeys?: Record<string, string>; localProviders?: string[] }
 ): AuthSource {
   if (p.isLocal) return isLocalProviderEnabled(p.catalogName, config) ? "local" : null;
   // OAuth wins for OAuth-capable providers when credentials exist.
@@ -93,12 +94,33 @@ export function providerAuthSource(
   return null;
 }
 
-/** True when a provider has any usable credentials (key OR OAuth). */
+/**
+ * True when a provider has any usable credentials (key OR OAuth).
+ *
+ * The "is this provider authenticated?" decision is routed through the unified
+ * credential authority (auth/credentials/authority.js) — the same oracle routing
+ * uses (hasCredentialsForProvider). The authority additionally honors the
+ * catalog's publicKeyFallback / oauthFallback affordances and any OAuth alias
+ * (e.g. the "google" catalog name resolves to the Gemini Code Assist OAuth
+ * credential), so a provider the authority considers authenticated is ready here.
+ *
+ * We OR in the previous config-SNAPSHOT check (`providerAuthSource(p, config)`)
+ * for one reason the authority cannot cover: the authority reads disk config via
+ * loadConfig(), but the TUI passes an in-memory `config` snapshot that may hold a
+ * key the user JUST typed and hasn't persisted yet. OR-ing preserves that
+ * just-typed readiness signal. Because this is strictly additive, it never marks
+ * a previously-ready provider un-ready.
+ *
+ * NOTE (deferred): providerAuthSource / providerAuthCapabilities still read
+ * process.env / config directly for the SOURCE/capability breakdown they report
+ * (env vs cfg vs oauth vs local) — the authority's isAuthenticated() only yields a
+ * bool. Collapsing those onto a richer AuthStatus is out of scope for this step.
+ */
 export function providerIsReady(
   p: ProviderDef,
-  config: { apiKeys?: Record<string, string>; localProviders?: string[] },
+  config: { apiKeys?: Record<string, string>; localProviders?: string[] }
 ): boolean {
-  return providerAuthSource(p, config) !== null;
+  return credentials.isAuthenticated(p.catalogName) || providerAuthSource(p, config) !== null;
 }
 
 /**
@@ -121,12 +143,11 @@ export interface AuthCapabilities {
 
 export function providerAuthCapabilities(
   p: ProviderDef,
-  config: { apiKeys?: Record<string, string> },
+  config: { apiKeys?: Record<string, string> }
 ): AuthCapabilities {
   const apiKeySupported = !!p.apiKeyEnvVar;
   const apiKeySet =
-    apiKeySupported &&
-    (!!process.env[p.apiKeyEnvVar] || !!config.apiKeys?.[p.apiKeyEnvVar]);
+    apiKeySupported && (!!process.env[p.apiKeyEnvVar] || !!config.apiKeys?.[p.apiKeyEnvVar]);
   const oauthSupported = !!p.oauthSlug;
   const oauthSet = oauthSupported && hasOAuthCredentials(p.catalogName);
   return {

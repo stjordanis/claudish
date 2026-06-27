@@ -22,6 +22,8 @@ import {
   retrieveUserQuota,
   CODE_ASSIST_FALLBACK_CHAIN,
 } from "../../auth/gemini-oauth.js";
+import { credentials } from "../../auth/credentials/authority.js";
+import type { RequestAuth } from "../../auth/credentials/types.js";
 
 const CODE_ASSIST_BASE = "https://cloudcode-pa.googleapis.com";
 const CODE_ASSIST_ENDPOINT = `${CODE_ASSIST_BASE}/v1internal:streamGenerateContent?alt=sse`;
@@ -155,6 +157,16 @@ export class GeminiCodeAssistProviderTransport implements ProviderTransport {
   private projectId: string | null = null;
   private tierId: string | null = null;
 
+  /**
+   * The delegated per-request auth artifact (headers + CodeAssist-envelope
+   * transform) from the credential authority, populated by refreshAuth(). The
+   * PRIMARY request's headers + envelope come from here. The local
+   * accessToken/projectId/tierId above are kept in lockstep (from the same
+   * module-cached oauth leaf functions) purely for the 429 fallback chain and
+   * quota logic, which are request-routing concerns, not auth.
+   */
+  private cachedAuth: RequestAuth | null = null;
+
   /** Index into CODE_ASSIST_FALLBACK_CHAIN where fallback starts (from requested model) */
   private fallbackStartIndex: number;
 
@@ -181,6 +193,21 @@ export class GeminiCodeAssistProviderTransport implements ProviderTransport {
   }
 
   async getHeaders(): Promise<Record<string, string>> {
+    // PRIMARY request: headers come from the delegated auth artifact. If
+    // refreshAuth() hasn't run yet (or delegation failed), fall back to a
+    // locally-built header set so the fallback chain's per-attempt getHeaders()
+    // still mints fresh credentials.
+    if (this.cachedAuth) return { ...this.cachedAuth.headers };
+    return this.buildLocalHeaders();
+  }
+
+  /**
+   * Build the Gemini Code Assist headers from local OAuth state. Used by the
+   * 429 fallback chain (handleCapacityExhausted), which needs a fresh
+   * x-activity-request-id per attempt. The PRIMARY request uses the delegated
+   * artifact's headers instead (see getHeaders()).
+   */
+  private buildLocalHeaders(): Record<string, string> {
     return {
       Authorization: `Bearer ${this.accessToken}`,
       "User-Agent": buildGeminiCliUserAgent(this.modelName),
@@ -189,10 +216,17 @@ export class GeminiCodeAssistProviderTransport implements ProviderTransport {
   }
 
   /**
-   * Refresh OAuth token and project ID before each request.
-   * Uses dynamic imports to avoid loading OAuth code unless needed.
+   * Refresh auth before each request. The transport no longer manages OAuth
+   * itself — it delegates the request artifact (headers + CodeAssist envelope)
+   * to the credential authority. It still mirrors accessToken/projectId/tierId
+   * locally (from the module-cached oauth leaf functions — a cache hit, no extra
+   * network round-trip) so the 429 fallback chain and quota logic keep working.
    */
   async refreshAuth(): Promise<void> {
+    this.cachedAuth = await credentials.getRequestAuth("gemini-codeassist", {
+      model: this.modelName,
+    });
+    // Mirror local state for the fallback chain + quota (cache-hit reads).
     this.accessToken = await getValidAccessToken();
     const { projectId, tierId } = await setupGeminiUser(this.accessToken);
     this.projectId = projectId;
@@ -211,7 +245,13 @@ export class GeminiCodeAssistProviderTransport implements ProviderTransport {
    * Stores the envelope for potential fallback retries in enqueueRequest.
    */
   transformPayload(payload: any): any {
-    const envelope = this.buildEnvelope(payload, this.modelName);
+    // PRIMARY request: the CodeAssist envelope comes from the delegated auth
+    // artifact. Fall back to the local builder if delegation hasn't run.
+    const envelope = this.cachedAuth?.transformPayload
+      ? this.cachedAuth.transformPayload(payload)
+      : this.buildEnvelope(payload, this.modelName);
+    // Store for capacity-fallback retries, which rebuild envelopes for other
+    // models via buildEnvelope (using the local projectId/tierId).
     this.lastEnvelope = envelope;
     return envelope;
   }
@@ -332,7 +372,9 @@ export class GeminiCodeAssistProviderTransport implements ProviderTransport {
 
       const fallbackEnvelope = this.buildEnvelope(innerPayload, fallbackModel);
       const endpoint = this.getEndpoint();
-      const headers = await this.getHeaders();
+      // Fallback attempts mint fresh headers (new x-activity-request-id) from
+      // local OAuth state — not the cached primary artifact.
+      const headers = this.buildLocalHeaders();
       headers["Content-Type"] = "application/json";
 
       const fallbackResponse = await queue.enqueue(() =>
@@ -376,7 +418,6 @@ export class GeminiCodeAssistProviderTransport implements ProviderTransport {
   private async logQuotaInfo(): Promise<void> {
     if (!this.accessToken || !this.projectId) return;
     try {
-
       const data = await retrieveUserQuota(this.accessToken, this.projectId);
       if (!data?.buckets?.length) return;
 
@@ -409,7 +450,6 @@ export class GeminiCodeAssistProviderTransport implements ProviderTransport {
   async getQuotaRemaining(modelName: string): Promise<number | undefined> {
     if (!this.accessToken || !this.projectId) return undefined;
     try {
-
       const data = await retrieveUserQuota(this.accessToken, this.projectId);
       if (!data?.buckets?.length) return undefined;
       const bucket = data.buckets.find((b: any) => b.modelId === modelName);

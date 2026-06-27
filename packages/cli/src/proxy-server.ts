@@ -34,6 +34,7 @@ import { wrapAnthropicError } from "./handlers/shared/anthropic-error.js";
 import { route, loadRoutingRules } from "./providers/routing-rules.js";
 import { createHandlerForProvider } from "./providers/provider-profiles.js";
 import { loadCustomEndpoints } from "./providers/custom-endpoints-loader.js";
+import { credentials } from "./auth/credentials/authority.js";
 import { getApiKey, loadConfig } from "./profile-config.js";
 
 /**
@@ -87,23 +88,25 @@ export async function createProxyServer(
   try {
     const customEpResult = loadCustomEndpoints(loadConfig());
     if (customEpResult.registered > 0) {
-      log(
-        `[Proxy] Registered ${customEpResult.registered} custom endpoint(s) from config`
-      );
+      log(`[Proxy] Registered ${customEpResult.registered} custom endpoint(s) from config`);
     }
     for (const err of customEpResult.errors) {
-      console.error(
-        `[claudish] customEndpoints['${err.name}'] failed validation: ${err.message}`
-      );
+      console.error(`[claudish] customEndpoints['${err.name}'] failed validation: ${err.message}`);
     }
   } catch (err) {
     // Config read failure should not crash the proxy — the rest of startup
     // continues and users get the default (builtin-only) set of providers.
-    log(`[Proxy] customEndpoints load skipped: ${err instanceof Error ? err.message : String(err)}`);
+    log(
+      `[Proxy] customEndpoints load skipped: ${err instanceof Error ? err.message : String(err)}`
+    );
   }
 
   // Define handlers for different roles
-  const nativeHandler = new NativeHandler(anthropicApiKey, options.advisorModels, options.advisorCollector);
+  const nativeHandler = new NativeHandler(
+    anthropicApiKey,
+    options.advisorModels,
+    options.advisorCollector
+  );
   const openRouterHandlers = new Map<string, ModelHandler>(); // Map from Target Model ID -> OpenRouter Handler
   const localProviderHandlers = new Map<string, ModelHandler>(); // Map from Target Model ID -> Local Provider Handler
   const remoteProviderHandlers = new Map<string, ModelHandler>(); // Map from Target Model ID -> Gemini/OpenAI Handler
@@ -273,8 +276,13 @@ export async function createProxyServer(
 
       // Get API key — config wins over env (TUI's `s` key writes to config).
       // Empty string for providers that don't require auth (e.g. zen/ free models).
+      // Resolve via the credential authority (env → ALIASES → config; op:// is
+      // already hydrated into env up front). The authority's getApiKey adds alias
+      // resolution the raw envVar read missed. Fall back to the legacy
+      // config/env read for any provider not in the registry.
       const apiKey = resolved.provider.apiKeyEnvVar
-        ? getApiKey(resolved.provider.apiKeyEnvVar) ||
+        ? credentials.getApiKey(resolved.provider.name) ||
+          getApiKey(resolved.provider.apiKeyEnvVar) ||
           process.env[resolved.provider.apiKeyEnvVar] ||
           ""
         : "";
@@ -576,23 +584,17 @@ export async function createProxyServer(
     // filtered out of the remote registry by design, so getRemoteProviderHandler
     // returns null for them and we'd otherwise report "transport does not
     // support discovery" even though LocalTransport DOES implement it.
-    const handler =
-      getLocalProviderHandler(targetModel) ?? getRemoteProviderHandler(targetModel);
+    const handler = getLocalProviderHandler(targetModel) ?? getRemoteProviderHandler(targetModel);
     const transport = (handler as unknown as { provider?: ProviderTransport })?.provider;
     if (!transport?.discoverProbeModel) {
-      return c.json(
-        { provider, model: null, reason: "transport does not support discovery" },
-        404
-      );
+      return c.json({ provider, model: null, reason: "transport does not support discovery" }, 404);
     }
     try {
       const outcome = await transport.discoverProbeModel(exclude);
       return c.json({
         provider,
         model: outcome.model,
-        reason: outcome.model
-          ? null
-          : (outcome.reason ?? "no model available"),
+        reason: outcome.model ? null : (outcome.reason ?? "no model available"),
       });
     } catch (e: unknown) {
       return c.json(
@@ -611,10 +613,7 @@ export async function createProxyServer(
     try {
       const body = await c.req.json();
       if (typeof body?.model !== "string" || body.model.length === 0) {
-        return c.json(
-          wrapAnthropicError(400, "missing required field: model"),
-          400
-        );
+        return c.json(wrapAnthropicError(400, "missing required field: model"), 400);
       }
       const handler = await getHandlerForRequest(body.model);
 
