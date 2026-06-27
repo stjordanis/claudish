@@ -18,6 +18,8 @@ import {
   buildVertexOAuthEndpoint,
   type VertexConfig,
 } from "../../auth/vertex-auth.js";
+import { credentials } from "../../auth/credentials/authority.js";
+import type { RequestAuth } from "../../auth/credentials/types.js";
 import { log } from "../../logger.js";
 
 export interface ParsedVertexModel {
@@ -45,7 +47,8 @@ export class VertexProviderTransport implements ProviderTransport {
 
   private config: VertexConfig;
   private parsed: ParsedVertexModel;
-  private accessToken?: string;
+  /** Delegated per-request auth artifact (Bearer header), from the authority. */
+  private cachedAuth: RequestAuth | null = null;
 
   constructor(config: VertexConfig, parsed: ParsedVertexModel) {
     this.config = config;
@@ -71,9 +74,7 @@ export class VertexProviderTransport implements ProviderTransport {
   }
 
   async getHeaders(): Promise<Record<string, string>> {
-    return {
-      Authorization: `Bearer ${this.accessToken}`,
-    };
+    return { ...(this.cachedAuth?.headers ?? {}) };
   }
 
   getRequestInit(): Record<string, any> {
@@ -82,20 +83,32 @@ export class VertexProviderTransport implements ProviderTransport {
     };
   }
 
+  /**
+   * Delegate normal-path auth to the credential authority. The Vertex credential
+   * mints the Bearer header from the shared VertexAuthManager (ADC / service
+   * account), which the transport no longer manages itself.
+   */
   async refreshAuth(): Promise<void> {
-    const authManager = getVertexAuthManager();
     try {
-      this.accessToken = await authManager.getAccessToken();
+      this.cachedAuth = await credentials.getRequestAuth("vertex", { model: this.parsed.model });
     } catch (e: any) {
       throw new Error(`Vertex AI auth failed: ${e.message}`);
     }
   }
 
+  /**
+   * 401 retry: force a real token refresh. The credential's getRequestAuth does
+   * not express a force-refresh, so we bust the SHARED VertexAuthManager cache
+   * directly (preserving the exact 401-retry semantics), then re-delegate to
+   * repopulate the cached artifact with the fresh token.
+   */
   async forceRefreshAuth(): Promise<void> {
     log("[VertexOAuth] Force refreshing auth token");
-    const authManager = getVertexAuthManager();
-    await authManager.refreshToken();
-    this.accessToken = await authManager.getAccessToken();
+    await getVertexAuthManager().refreshToken();
+    this.cachedAuth = await credentials.getRequestAuth("vertex", {
+      model: this.parsed.model,
+      forceRefresh: true,
+    });
   }
 
   /**

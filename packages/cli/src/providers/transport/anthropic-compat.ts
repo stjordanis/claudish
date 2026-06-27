@@ -6,13 +6,10 @@
  * anthropic-version, plus Kimi OAuth fallback for kimi-coding.
  */
 
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import { homedir } from "node:os";
 import type { ProviderTransport, StreamFormat } from "./types.js";
 import type { RemoteProvider } from "../../handlers/shared/remote-provider-types.js";
 import { log } from "../../logger.js";
-import { KimiOAuth } from "../../auth/kimi-oauth.js";
+import { credentials } from "../../auth/credentials/authority.js";
 import { isTerminal429 } from "./openai.js";
 
 export class AnthropicProviderTransport implements ProviderTransport {
@@ -55,24 +52,20 @@ export class AnthropicProviderTransport implements ProviderTransport {
     // subscription is OAuth (claudish login kimi). A stale or wrong
     // KIMI_CODING_API_KEY env var would otherwise produce 401 even
     // though the user has a valid OAuth token on disk.
+    //
+    // The transport no longer manages OAuth itself — it delegates to the
+    // credential authority, which mints the OAuth artifact (anthropic-version +
+    // Bearer token + the X-Msh-* platform headers) and applies the
+    // OAuth_FALLBACK_TO_API_KEY → api-key fallback internally. On failure here
+    // we keep the plain x-api-key path already populated above.
     if (this.provider.name === "kimi-coding") {
       try {
-        const credPath = join(homedir(), ".claudish", "kimi-oauth.json");
-        if (existsSync(credPath)) {
-          const data = JSON.parse(readFileSync(credPath, "utf-8"));
-          if (data.access_token && data.refresh_token) {
-            const oauth = KimiOAuth.getInstance();
-            const accessToken = await oauth.getAccessToken();
-
-            // Replace API key auth with Bearer token
-            delete headers["x-api-key"];
-            headers["Authorization"] = `Bearer ${accessToken}`;
-
-            // Add Kimi-specific platform headers
-            const platformHeaders = oauth.getPlatformHeaders();
-            Object.assign(headers, platformHeaders);
-          }
+        const auth = await credentials.getRequestAuth("kimi-coding", { model: "" });
+        // If the authority returned an OAuth Bearer, it replaces the api-key auth.
+        if (auth.headers.Authorization) {
+          delete headers["x-api-key"];
         }
+        Object.assign(headers, auth.headers);
       } catch (e: any) {
         log(`[${this.displayName}] OAuth path failed, falling back to API key: ${e.message}`);
       }
@@ -100,7 +93,10 @@ export class AnthropicProviderTransport implements ProviderTransport {
       const response = await fetchFn();
 
       if (response.status === 429 && attempt < maxRetries) {
-        const bodyText = await response.clone().text().catch(() => "");
+        const bodyText = await response
+          .clone()
+          .text()
+          .catch(() => "");
         if (isTerminal429(bodyText)) {
           log(`[${this.displayName}] 429 is terminal (billing/quota), not retrying`);
           return response;
