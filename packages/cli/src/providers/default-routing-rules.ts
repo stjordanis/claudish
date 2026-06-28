@@ -56,6 +56,13 @@ export const DEFAULT_ROUTING_RULES: RoutingRules = {
   // DeepSeek: direct API, OpenRouter.
   "deepseek-*": ["deepseek", "openrouter"],
 
+  // Sakana Fugu: subscription first, then token API. NO hardcoded openrouter —
+  // we don't claim OpenRouter carries the model; it's reachable explicitly via
+  // or@sakana/fugu (catalog-resolved). The bare "fugu" id needs its own exact
+  // rule because "fugu-*" only matches hyphenated names.
+  fugu: ["sakana-coding", "sakana"],
+  "fugu-*": ["sakana-coding", "sakana"],
+
   // OpenCode Zen owns/serves a few model lines exclusively.
   // Pragmatic shim until Firebase aggregators[] coverage closes the gap.
   "*-zen": ["opencode-zen"],

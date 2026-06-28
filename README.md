@@ -19,7 +19,7 @@
 **Claudish** (Claude-ish) is a CLI tool that allows you to run Claude Code with any AI model by proxying requests through a local Anthropic API-compatible server.
 
 **Supported Providers:**
-- **Cloud:** OpenRouter (580+ models), Google Gemini, OpenAI, MiniMax, Kimi, GLM, Z.AI, OllamaCloud, OpenCode Zen
+- **Cloud:** OpenRouter (580+ models), Google Gemini, OpenAI, MiniMax, Kimi, GLM, Z.AI, Sakana Fugu, OllamaCloud, OpenCode Zen
 - **Local:** Ollama, LM Studio, vLLM, MLX
 - **Enterprise:** Vertex AI (Google Cloud)
 
@@ -330,6 +330,8 @@ Claudish automatically loads `.env` from the current directory at startup. For t
 | `ZHIPU_API_KEY` | GLM/Zhipu (`glm@`) | `GLM_API_KEY` |
 | `GLM_CODING_API_KEY` | GLM Coding Plan (`gc@`) | `ZAI_CODING_API_KEY` |
 | `ZAI_API_KEY` | Z.AI (`zai@`) | |
+| `SAKANA_API_KEY` | Sakana Fugu (`sakana@`, `fugu@`) | |
+| `SAKANA_CODING_API_KEY` | Sakana Fugu Subscription (`sc@`) | `SAKANA_API_KEY` |
 | `OLLAMA_API_KEY` | OllamaCloud (`oc@`) | |
 | `OPENCODE_API_KEY` | OpenCode Zen (`zen@`) — optional for free models | |
 | `LITELLM_API_KEY` | LiteLLM (`ll@`) — requires `LITELLM_BASE_URL` | |
@@ -556,6 +558,8 @@ claudish --model ollama@llama3.2:3 "code review"  # 3 concurrent requests
 | `kimi@`, `moon@` | Kimi Direct | `MOONSHOT_API_KEY` | `kimi@kimi-k2` |
 | `glm@`, `zhipu@` | GLM Direct | `ZHIPU_API_KEY` | `glm@glm-4` |
 | `zai@` | Z.AI Direct | `ZAI_API_KEY` | `zai@glm-4` |
+| `sakana@`, `fugu@` | Sakana Fugu | `SAKANA_API_KEY` | `fugu@fugu-ultra` |
+| `sc@` | Sakana Fugu Subscription | `SAKANA_CODING_API_KEY` | `sc@fugu-ultra` |
 | `llama@`, `lc@`, `meta@` | OllamaCloud | `OLLAMA_API_KEY` | `llama@llama-3.1-70b` |
 | `oc@` | OllamaCloud | `OLLAMA_API_KEY` | `oc@llama-3.1-70b` |
 | `zen@` | OpenCode Zen (free/paid) | `OPENCODE_API_KEY` _(optional)_ | `zen@gpt-5-nano` |
@@ -580,6 +584,7 @@ When no provider is specified, Claudish auto-detects from model name:
 | `abab-*`, `minimax/*` | MiniMax Direct | `abab-6.5` |
 | `kimi-*`, `moonshot-*` | Kimi Direct | `kimi-k2` |
 | `glm-*`, `zhipu/*` | GLM Direct | `glm-4` |
+| `fugu-*`, `sakana/*` | Sakana Fugu | `fugu-ultra` |
 | `poe:*` | Poe | `poe:GPT-4o` |
 | `claude-*`, `anthropic/*` | Native Anthropic | `claude-sonnet-4` |
 | **Unknown `vendor/model`** | **Error** | Use `openrouter@vendor/model` |

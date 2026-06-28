@@ -45,6 +45,8 @@ claudish --model ollama@llama3.2:3 "task"  # 3 concurrent requests
 - `kimi@`, `moon@` → Kimi
 - `glm@`, `zhipu@` → GLM
 - `gc@` → GLM Coding Plan
+- `sakana@`, `fugu@` → Sakana Fugu
+- `sc@` → Sakana Fugu Subscription
 - `llama@`, `oc@` → OllamaCloud
 - `litellm@`, `ll@` → LiteLLM (requires LITELLM_BASE_URL)
 - `ollama@` → Ollama (local)

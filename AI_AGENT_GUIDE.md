@@ -55,6 +55,8 @@ Claudish = Claude Code + Any AI Model
 | `mm@`, `mmax@` | MiniMax Direct | `mm@MiniMax-M2` |
 | `kimi@`, `moon@` | Kimi Direct | `kimi@kimi-k2` |
 | `glm@`, `zhipu@` | GLM Direct | `glm@glm-4` |
+| `sakana@`, `fugu@` | Sakana Fugu | `fugu@fugu-ultra` |
+| `sc@` | Sakana Fugu Subscription | `sc@fugu-ultra` |
 | `llama@`, `oc@` | OllamaCloud | `llama@llama-3.1-70b` |
 | `v@`, `vertex@` | Vertex AI | `v@gemini-2.5-flash` |
 | `poe@` | Poe | `poe@GPT-4o` |
@@ -70,6 +72,7 @@ Claudish = Claude Code + Any AI Model
 | `llama-*`, `meta-llama/*` | OllamaCloud |
 | `kimi-*`, `moonshot-*` | Kimi API |
 | `glm-*`, `zhipu/*` | GLM API |
+| `fugu-*`, `sakana/*` | Sakana Fugu |
 | `claude-*` | Native Anthropic |
 | **Unknown vendors** | Error (use `openrouter@`) |
 

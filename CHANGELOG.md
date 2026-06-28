@@ -2,6 +2,12 @@
 
 All notable changes to [Claudish](https://github.com/MadAppGang/claudish).
 
+## [7.9.0] - 2026-06-28
+
+### Features
+
+- v7.9.0 — add Sakana AI Fugu provider. OpenAI-compatible direct API at `https://api.sakana.ai` with two sibling providers: `sakana@`/`fugu@` (API / token plan, `SAKANA_API_KEY`) and `sc@` (subscription, `SAKANA_CODING_API_KEY`, aliased to `SAKANA_API_KEY`). Models `fugu` and `fugu-ultra` auto-detect from bare names (`fugu-*`, `sakana/*`). The `fugu`/`fugu-*` routing chain is `sakana-coding → sakana` — OpenRouter is reachable explicitly via `or@sakana/fugu` (catalog-resolved), not hardcoded.
+
 ## [7.8.4] - 2026-06-28
 
 ### Bug Fixes

@@ -110,6 +110,16 @@ describe("DEFAULT_ROUTING_RULES pattern matching", () => {
     expect(matched).toEqual(["deepseek", "openrouter"]);
   });
 
+  test("'fugu' matches the exact fugu rule → [sakana-coding, sakana] (no openrouter)", () => {
+    const matched = matchRoutingRule("fugu", DEFAULT_ROUTING_RULES);
+    expect(matched).toEqual(["sakana-coding", "sakana"]);
+  });
+
+  test("'fugu-ultra' matches fugu-* → [sakana-coding, sakana] (no openrouter)", () => {
+    const matched = matchRoutingRule("fugu-ultra", DEFAULT_ROUTING_RULES);
+    expect(matched).toEqual(["sakana-coding", "sakana"]);
+  });
+
   test("'something-zen' matches *-zen → [opencode-zen]", () => {
     const matched = matchRoutingRule("something-zen", DEFAULT_ROUTING_RULES);
     expect(matched).toEqual(["opencode-zen"]);

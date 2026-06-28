@@ -126,6 +126,16 @@ describe("parseModelSpec — native model auto-detection", () => {
     expect(parsed.provider).toBe("glm");
   });
 
+  test("fugu-ultra auto-detects as sakana", () => {
+    const parsed = parseModelSpec("fugu-ultra");
+    expect(parsed.provider).toBe("sakana");
+  });
+
+  test("sakana/fugu auto-detects as sakana", () => {
+    const parsed = parseModelSpec("sakana/fugu");
+    expect(parsed.provider).toBe("sakana");
+  });
+
   test("qwen3-coder auto-detects as qwen", () => {
     const parsed = parseModelSpec("qwen3-coder");
     expect(parsed.provider).toBe("qwen");

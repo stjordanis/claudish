@@ -375,6 +375,10 @@ export const PROVIDER_PROFILES: Record<string, ProviderProfile> = {
   "opencode-zen": openCodeZenProfile,
   "opencode-zen-go": openCodeZenProfile,
   deepseek: openaiProfile,
+  // Sakana Fugu is OpenAI Chat-Completions compatible. Both siblings (token +
+  // subscription) hit the identical endpoint, so both reuse openaiProfile.
+  sakana: openaiProfile,
+  "sakana-coding": openaiProfile,
   ollamacloud: ollamaCloudProfile,
   litellm: litellmProfile,
   vertex: vertexProfile,

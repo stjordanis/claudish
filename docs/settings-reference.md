@@ -154,6 +154,8 @@ Claudish automatically loads `.env` from the current working directory at startu
 | `ZHIPU_API_KEY` | GLM/Zhipu direct API (`glm@`, `zhipu@`) | `GLM_API_KEY` | https://open.bigmodel.cn/ |
 | `GLM_CODING_API_KEY` | GLM Coding Plan at Z.AI (`gc@`) | `ZAI_CODING_API_KEY` | https://z.ai/subscribe |
 | `ZAI_API_KEY` | Z.AI Anthropic-compatible API (`zai@`) | | https://z.ai/ |
+| `SAKANA_API_KEY` | Sakana Fugu API / token plan (`sakana@`, `fugu@`) | | https://console.sakana.ai/get-started |
+| `SAKANA_CODING_API_KEY` | Sakana Fugu Subscription (`sc@`) | `SAKANA_API_KEY` | https://console.sakana.ai/get-started |
 | `OLLAMA_API_KEY` | OllamaCloud hosted API (`oc@`, `llama@`, `lc@`, `meta@`) | | https://ollama.com/account |
 | `OPENCODE_API_KEY` | OpenCode Zen (`zen@`); optional for free models (falls back to `"public"` bearer) | | https://opencode.ai/ |
 | `XAI_API_KEY` | xAI / Grok (direct API, detected in model selector) | | https://x.ai/ |
@@ -331,6 +333,8 @@ Provider part is **case-insensitive**. Shortcuts are resolved to canonical provi
 | `glm`, `zhipu` | `glm` | GLM/Zhipu direct API (`ZHIPU_API_KEY` or `GLM_API_KEY`) |
 | `gc` | `glm-coding` | GLM Coding Plan at Z.AI (`GLM_CODING_API_KEY` or `ZAI_CODING_API_KEY`) |
 | `zai` | `zai` | Z.AI Anthropic-compatible API (`ZAI_API_KEY`) |
+| `sakana`, `fugu` | `sakana` | Sakana Fugu API / token plan (`SAKANA_API_KEY`) |
+| `sc` | `sakana-coding` | Sakana Fugu Subscription (`SAKANA_CODING_API_KEY` or `SAKANA_API_KEY`) |
 | `oc`, `llama`, `lc`, `meta` | `ollamacloud` | OllamaCloud hosted API (`OLLAMA_API_KEY`) |
 | `zen` | `opencode-zen` | OpenCode Zen (`OPENCODE_API_KEY`; optional for free models) |
 | `zengo`, `zgo` | `opencode-zen-go` | OpenCode Zen Go subscription plan |
@@ -361,6 +365,7 @@ When no `provider@` prefix is given, Claudish detects the provider from the mode
 | `moonshot/*` or `moonshot-*` or `kimi-*` | Kimi | |
 | `zhipu/*` or `glm-*` or `chatglm-*` | GLM | |
 | `z-ai/*` or `zai/*` | Z.AI | |
+| `fugu*` or `sakana/*` | Sakana Fugu | |
 | `ollamacloud/*` or `meta-llama/*` or `llama-*` or `llama3*` | OllamaCloud | |
 | `qwen*` | Auto-routed (no direct API) | Falls to OpenRouter or LiteLLM |
 | `poe:*` | Poe | Literal `poe:` prefix |
@@ -386,6 +391,8 @@ The old `prefix/model` format works but emits a deprecation warning suggesting t
 | `glm/`, `zhipu/` | GLM | `glm@` |
 | `gc/` | GLM Coding | `gc@` |
 | `zai/` | Z.AI | `zai@` |
+| `sakana/`, `fugu/` | Sakana Fugu | `sakana@`, `fugu@` |
+| `sc/` | Sakana Subscription | `sc@` |
 | `oc/` | OllamaCloud | `oc@` |
 | `zen/` | OpenCode Zen | `zen@` |
 | `zengo/`, `zgo/` | OpenCode Zen Go | `zengo@` |

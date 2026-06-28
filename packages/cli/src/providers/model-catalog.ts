@@ -106,6 +106,7 @@ const OWNER_PROVIDER_SLUGS = new Set<string>([
   "minimax",
   "moonshotai",
   "qwen",
+  "sakana",
 ]);
 
 /**

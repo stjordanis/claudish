@@ -199,6 +199,8 @@ export const FIREBASE_SLUG_TO_PROVIDER_NAME: Record<string, string> = {
   moonshotai: "kimi",
   minimax: "minimax",
   qwen: "qwen",
+  deepseek: "deepseek",
+  sakana: "sakana",
 };
 
 /**
