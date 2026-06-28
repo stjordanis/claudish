@@ -358,13 +358,8 @@ async function resolveOpKeyForEnvVarsInner(
     throw err;
   }
 
-  const {
-    collectConfigImports,
-    resolveSecrets,
-    resolveGlobImportForEnvVars,
-    isOpReference,
-    recordOpHydratedVars,
-  } = await import("../../providers/onepassword.js");
+  const { collectConfigImports, resolveSecrets, resolveGlobImportForEnvVars, recordOpHydratedVars } =
+    await import("../../providers/onepassword.js");
 
   const cfg = readConfigRaw();
   const out: Record<string, string> = {};
@@ -412,7 +407,9 @@ async function resolveOpKeyForEnvVarsInner(
       for (const [name, raw] of Object.entries(cfg.customEndpoints)) {
         if (!raw || typeof raw !== "object") continue;
         const apiKey = (raw as { apiKey?: unknown }).apiKey;
-        if (typeof apiKey !== "string" || !isOpReference(apiKey)) continue;
+        // Use a plain op:// prefix check (NOT isOpReference, whose anchored regex
+        // rejects whitespace) — real 1Password item/section titles contain spaces.
+        if (typeof apiKey !== "string" || !apiKey.startsWith("op://")) continue;
         const envVar = `CUSTOM_${name.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_KEY`;
         if (wanted.has(envVar) && !(envVar in out)) customRefs[envVar] = apiKey;
       }

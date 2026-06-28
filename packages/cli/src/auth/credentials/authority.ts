@@ -1,11 +1,14 @@
 /**
  * CredentialAuthority — the single registry/dispatch point for credentials.
  *
- * This is a PURE ADDITION (Step 1 of the credential-authority refactor). Nothing
- * else in the codebase consumes it yet; transports and the existing read sites
- * are migrated in later steps. Registering a provider under multiple names
- * (aliases) lets the catalog's alternate slugs (e.g. "google" → the Gemini Code
- * Assist credential) resolve to the same instance.
+ * The single ASYNC source of truth for provider credentials. proxy-server
+ * (sign-time getRequestAuth), routing-rules (hasCredentialsForProvider), the
+ * model-selector/index readiness checks, provider-resolver, and the OAuth
+ * transports all consume it; the old per-entry-point env-push paths
+ * (loadStoredApiKeys/hydrateOpSecrets/applyCustomEndpointOpKeys) are gone.
+ * Registering a provider under multiple names (aliases) lets the catalog's
+ * alternate slugs (e.g. "google" → the Gemini Code Assist credential) resolve
+ * to the same instance.
  */
 
 import { BUILTIN_PROVIDERS } from "../../providers/provider-definitions.js";
@@ -29,6 +32,30 @@ export class CredentialAuthority {
     for (const a of aliases) {
       this.registry.set(a, p);
     }
+  }
+
+  /**
+   * Register (or replace) a plain API-key provider at RUNTIME — used by custom
+   * endpoints, which are loaded after this singleton is built. Idempotent: a
+   * re-register with the same name overwrites. This keeps custom endpoints
+   * inside the single authority instead of resolving their keys out-of-band.
+   */
+  registerApiKeyProvider(descriptor: {
+    name: string;
+    envVar: string;
+    aliases?: string[];
+    authScheme?: "bearer" | "x-api-key";
+  }): void {
+    if (!descriptor.envVar) return;
+    this.register(
+      new ApiKeyCredentialProvider({
+        catalogName: descriptor.name,
+        envVar: descriptor.envVar,
+        aliases: descriptor.aliases,
+        authScheme: descriptor.authScheme === "x-api-key" ? "x-api-key" : "bearer",
+      }),
+      [descriptor.name]
+    );
   }
 
   /**

@@ -24,9 +24,6 @@
  * - g/, gemini/, oai/, mmax/, etc. prefixes still work with deprecation warnings
  */
 
-import { existsSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import {
   type ParsedModel,
   getLegacySyntaxWarning,
@@ -40,7 +37,7 @@ import {
 import { parseUrlModel, resolveProvider } from "./provider-registry.js";
 import { resolveRemoteProvider } from "./remote-provider-registry.js";
 import { buildCredentialHint } from "./routing-hints.js";
-import { hasOpSources, resolveOpKeyForEnvVars } from "../auth/credentials/op-source.js";
+import { credentials } from "../auth/credentials/authority.js";
 
 /**
  * Provider category types
@@ -60,6 +57,12 @@ export interface ProviderResolution {
   category: ProviderCategory;
   /** Human-readable provider name (e.g., "Gemini", "OpenRouter", "Ollama") */
   providerName: string;
+  /**
+   * The credential-authority catalog name for this provider (e.g. "minimax",
+   * "openrouter", "google"), used to resolve availability through the single
+   * authority. Null for categories with no authority provider (unknown).
+   */
+  catalogName: string | null;
   /** The model name after stripping the prefix */
   modelName: string;
   /** Full original model ID */
@@ -148,41 +151,6 @@ const PROVIDER_DISPLAY_NAMES = new Proxy<Record<string, string>>(
   }
 );
 
-/**
- * Check if any of the API keys (including aliases) are available
- */
-function isApiKeyAvailable(info: ApiKeyInfo): boolean {
-  if (!info.envVar) {
-    return true; // No key required (OAuth or free tier)
-  }
-
-  if (process.env[info.envVar]) {
-    return true;
-  }
-
-  // Check aliases
-  if (info.aliases) {
-    for (const alias of info.aliases) {
-      if (process.env[alias]) {
-        return true;
-      }
-    }
-  }
-
-  // Check for OAuth credential file as fallback
-  if (info.oauthFallback) {
-    try {
-      const credPath = join(homedir(), ".claudish", info.oauthFallback);
-      if (existsSync(credPath)) {
-        return true;
-      }
-    } catch {
-      // Ignore filesystem errors
-    }
-  }
-
-  return false;
-}
 
 /**
  * Resolve a model ID to its provider information
@@ -211,11 +179,12 @@ export function resolveModelProvider(modelId: string | undefined): ProviderResol
     const info = API_KEY_INFO.openrouter;
     return {
       category: "openrouter",
+      catalogName: "openrouter",
       providerName: "OpenRouter",
       modelName: "",
       fullModelId: "",
       requiredApiKeyEnvVar: info.envVar,
-      apiKeyAvailable: isApiKeyAvailable(info),
+      apiKeyAvailable: false, // authoritatively set by validateApiKeysForModels (credentials.isAvailable)
       apiKeyDescription: info.description,
       apiKeyUrl: info.url,
     };
@@ -253,6 +222,7 @@ export function resolveModelProvider(modelId: string | undefined): ProviderResol
 
     return addCommonFields({
       category: "local",
+      catalogName: parsed.provider,
       providerName,
       modelName,
       fullModelId: modelId,
@@ -268,6 +238,7 @@ export function resolveModelProvider(modelId: string | undefined): ProviderResol
     const urlParsed = parseUrlModel(modelId);
     return addCommonFields({
       category: "local",
+      catalogName: null,
       providerName: "Custom URL",
       modelName: urlParsed?.modelName || modelId,
       fullModelId: modelId,
@@ -282,6 +253,7 @@ export function resolveModelProvider(modelId: string | undefined): ProviderResol
   if (parsed.provider === "native-anthropic") {
     return addCommonFields({
       category: "native-anthropic",
+      catalogName: "native-anthropic",
       providerName: "Anthropic (Native)",
       modelName: parsed.model,
       fullModelId: modelId,
@@ -297,11 +269,12 @@ export function resolveModelProvider(modelId: string | undefined): ProviderResol
     const info = API_KEY_INFO.openrouter;
     return addCommonFields({
       category: "openrouter",
+      catalogName: "openrouter",
       providerName: "OpenRouter",
       modelName: parsed.model,
       fullModelId: modelId,
       requiredApiKeyEnvVar: info.envVar,
-      apiKeyAvailable: isApiKeyAvailable(info),
+      apiKeyAvailable: false, // authoritatively set by validateApiKeysForModels (credentials.isAvailable)
       apiKeyDescription: info.description,
       apiKeyUrl: info.url,
     });
@@ -333,11 +306,12 @@ export function resolveModelProvider(modelId: string | undefined): ProviderResol
     // Return direct-api resolution — report missing key instead of silent fallback
     return addCommonFields({
       category: "direct-api",
+      catalogName: provider.name,
       providerName: providerDisplayName,
       modelName: remoteResolved.modelName,
       fullModelId: modelId,
       requiredApiKeyEnvVar: info.envVar || null,
-      apiKeyAvailable: isApiKeyAvailable(info),
+      apiKeyAvailable: false, // authoritatively set by validateApiKeysForModels (credentials.isAvailable)
       apiKeyDescription: info.envVar ? info.description : null,
       apiKeyUrl: info.envVar ? info.url : null,
       wasAutoRouted,
@@ -352,6 +326,7 @@ export function resolveModelProvider(modelId: string | undefined): ProviderResol
   if (parsed.provider === "unknown") {
     return addCommonFields({
       category: "unknown",
+      catalogName: null,
       providerName: "Unknown",
       modelName: parsed.model,
       fullModelId: modelId,
@@ -365,6 +340,7 @@ export function resolveModelProvider(modelId: string | undefined): ProviderResol
   // 8. Fallback for any remaining cases (shouldn't normally reach here)
   return addCommonFields({
     category: "unknown",
+    catalogName: null,
     providerName: "Unknown",
     modelName: parsed.model,
     fullModelId: modelId,
@@ -390,29 +366,20 @@ export async function validateApiKeysForModels(
     .filter((m): m is string => m !== undefined)
     .map((m) => resolveModelProvider(m));
 
-  // The sync `apiKeyAvailable` above reflects env/config/oauth only. For any
-  // resolution still missing its key, consult the ONE op-source seam (lazy SDK)
-  // to see whether 1Password can supply it — making validation the single
-  // authority's 1Password-aware view. Resolved op keys are written through to
-  // process.env so downstream sign-time + spawned children see them.
-  const wantedEnvVars = new Set(
-    resolutions
-      .filter((r) => r.requiredApiKeyEnvVar && !r.apiKeyAvailable)
-      .map((r) => r.requiredApiKeyEnvVar)
-      .filter((v): v is string => typeof v === "string" && v.length > 0)
+  // SINGLE ORACLE: availability is decided by the credential authority
+  // (credentials.isAvailable → env → config → oauth-file → op://, lazy SDK) — the
+  // one source of truth that also gap-fills process.env with any resolved op://
+  // key (for downstream sign-time + spawned children). The sync apiKeyAvailable
+  // hint from resolveModelProvider is overwritten here with the authority's
+  // answer, so validation can never disagree with routing/sign-time.
+  await Promise.all(
+    resolutions.map(async (r) => {
+      // No key required (local / native / OAuth-or-free) → already true.
+      if (!r.requiredApiKeyEnvVar) return;
+      if (!r.catalogName) return; // unknown provider — leave as resolved
+      r.apiKeyAvailable = await credentials.isAvailable(r.catalogName);
+    })
   );
-  if (wantedEnvVars.size > 0 && hasOpSources()) {
-    const resolved = await resolveOpKeyForEnvVars(wantedEnvVars, { onAuthFailure: "skip" });
-    for (const [envVar, value] of Object.entries(resolved)) {
-      if (value && !process.env[envVar]) process.env[envVar] = value;
-    }
-    // Re-mark availability for any resolution whose key was just satisfied.
-    for (const r of resolutions) {
-      if (r.requiredApiKeyEnvVar && !r.apiKeyAvailable && process.env[r.requiredApiKeyEnvVar]) {
-        r.apiKeyAvailable = true;
-      }
-    }
-  }
 
   return resolutions;
 }

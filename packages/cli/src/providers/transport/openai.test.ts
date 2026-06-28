@@ -4,10 +4,10 @@ import type { RemoteProvider } from "../../handlers/shared/remote-provider-types
 
 const mockProvider: RemoteProvider = {
   name: "opencode-zen",
-  displayName: "Zen",
   baseUrl: "https://opencode.ai/zen",
   apiPath: "/v1/chat/completions",
-  transport: "openai",
+  apiKeyEnvVar: "OPENCODE_API_KEY",
+  prefixes: ["zen@"],
 };
 
 describe("OpenAIProviderTransport 429 retry (#66)", () => {

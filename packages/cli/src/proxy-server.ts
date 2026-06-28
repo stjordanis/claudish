@@ -75,7 +75,10 @@ export interface ProxyServerOptions {
 
 export async function createProxyServer(
   port: number,
-  openrouterApiKey?: string,
+  // Legacy: the OpenRouter key is now resolved through the credential authority
+  // (transport getHeaders()), not passed in. Param retained for signature
+  // stability; callers may pass undefined.
+  _openrouterApiKey?: string,
   model?: string,
   monitorMode: boolean = false,
   anthropicApiKey?: string,
@@ -125,7 +128,10 @@ export async function createProxyServer(
     const modelId = targetModel.includes("@") ? parsed.model : targetModel;
 
     if (!openRouterHandlers.has(modelId)) {
-      const orProvider = new OpenRouterProviderTransport(openrouterApiKey || "", modelId);
+      // The OpenRouter key is resolved through the credential authority inside
+      // the transport's getHeaders() (single source of truth) — the legacy
+      // openrouterApiKey param is no longer the signing source.
+      const orProvider = new OpenRouterProviderTransport("", modelId);
       const orAdapter = new OpenRouterAPIFormat(modelId);
       openRouterHandlers.set(
         modelId,
@@ -140,19 +146,20 @@ export async function createProxyServer(
   };
 
   // Helper to get or create Poe handler for a target model
-  const getPoeHandler = (
+  const getPoeHandler = async (
     targetModel: string,
     invocationMode?: ComposedHandlerOptions["invocationMode"]
-  ): ModelHandler | null => {
-    const poeApiKey = process.env.POE_API_KEY;
-    if (!poeApiKey) {
-      log(`[Proxy] POE_API_KEY not set, cannot use Poe model: ${targetModel}`);
+  ): Promise<ModelHandler | null> => {
+    // Gate on the authority (env → config → op://), not a raw env read.
+    if (!(await credentials.isAvailable("poe"))) {
+      log(`[Proxy] Poe credentials not available, cannot use Poe model: ${targetModel}`);
       return null;
     }
     // Strip "poe:" prefix to get the actual model name for the API
     const modelId = targetModel.replace(/^poe:/, "");
     if (!poeHandlers.has(modelId)) {
-      const poeTransport = new PoeProvider(poeApiKey);
+      // The transport resolves its key through the authority in getHeaders().
+      const poeTransport = new PoeProvider();
       poeHandlers.set(
         modelId,
         new ComposedHandler(poeTransport, modelId, modelId, port, {
@@ -495,7 +502,7 @@ export async function createProxyServer(
 
     // 3. Check for Poe Model (poe: prefix)
     if (isPoeModel(target)) {
-      const poeHandler = getPoeHandler(target, invocationMode);
+      const poeHandler = await getPoeHandler(target, invocationMode);
       if (poeHandler) {
         log(`[Proxy] Routing to Poe: ${target}`);
         return poeHandler;

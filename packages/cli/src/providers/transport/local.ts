@@ -15,6 +15,7 @@ import type { ProviderTransport, StreamFormat } from "./types.js";
 import type { LocalProvider as LocalProviderConfig } from "../../providers/provider-registry.js";
 import { LocalModelQueue } from "../../handlers/shared/local-queue.js";
 import { log } from "../../logger.js";
+import { credentials } from "../../auth/credentials/authority.js";
 import { Agent } from "undici";
 import {
   discoverViaLMStudio,
@@ -80,11 +81,19 @@ export class LocalTransport implements ProviderTransport {
   }
 
   async getHeaders(): Promise<Record<string, string>> {
+    // Local providers default to no auth. When the deployment requires it
+    // (LM Studio "Reachable on local network", vLLM --api-key, remote Ollama
+    // behind a reverse proxy), the user sets <PROVIDER>_API_KEY. For the four
+    // known local providers the bearer token resolves through the credential
+    // authority (env → config → op://) — the single source of truth. A "custom"
+    // local endpoint (not registered in the authority) keeps its config.apiKey.
+    if (this.config.name && this.config.name !== "custom") {
+      const auth = await credentials.getRequestAuth(this.config.name, { model: "" });
+      if (auth.headers.Authorization || auth.headers["x-api-key"]) {
+        return { ...auth.headers };
+      }
+    }
     const headers: Record<string, string> = {};
-    // Local providers default to no auth. When the deployment requires
-    // it (LM Studio "Reachable on local network", vLLM --api-key, remote
-    // Ollama behind a reverse proxy), the user sets <PROVIDER>_API_KEY
-    // and it ships as a Bearer token.
     if (this.config.apiKey) {
       headers["Authorization"] = `Bearer ${this.config.apiKey}`;
     }

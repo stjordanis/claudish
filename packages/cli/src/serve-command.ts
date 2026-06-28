@@ -138,9 +138,10 @@ export async function serveCommand(args: string[]): Promise<void> {
     process.exit(1);
   }
 
-  // API keys come from the environment. index.ts's loadStoredApiKeys() has
-  // already merged ~/.claudish/config.json keys into process.env at module
-  // load, so reading env here captures both env-set and config-file keys.
+  // API keys come from the environment here. Config-only / op:// keys are now
+  // resolved lazily by the credential authority when a model is actually routed
+  // (the old loadStoredApiKeys env-push at module load was removed in the
+  // async-credential-layer refactor), so this reads env-set keys directly.
   // serve bypasses parseArgs (which the normal CLI uses to fill these), so we
   // must read them explicitly or null-provider→OpenRouter and claude-* slots
   // (native passthrough) would have no credentials.

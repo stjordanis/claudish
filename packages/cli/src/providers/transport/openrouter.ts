@@ -14,6 +14,7 @@
 
 import type { ProviderTransport, StreamFormat } from "./types.js";
 import { OpenRouterRequestQueue } from "../../handlers/shared/openrouter-queue.js";
+import { credentials } from "../../auth/credentials/authority.js";
 
 const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
 
@@ -22,11 +23,15 @@ export class OpenRouterProviderTransport implements ProviderTransport {
   readonly displayName = "OpenRouter";
   readonly streamFormat: StreamFormat = "openai-sse";
 
-  private apiKey: string;
+  private modelId: string;
   private queue: OpenRouterRequestQueue;
 
-  constructor(apiKey: string, _modelId?: string) {
-    this.apiKey = apiKey;
+  // The `apiKey` param is retained for signature compatibility but is NO LONGER
+  // the signing source — the OpenRouter key is resolved ON DEMAND through the
+  // credential authority (the single source of truth), so an op://-only key is
+  // resolved at request time just like every direct provider.
+  constructor(_apiKey: string, modelId?: string) {
+    this.modelId = modelId ?? "";
     this.queue = OpenRouterRequestQueue.getInstance();
   }
 
@@ -43,8 +48,11 @@ export class OpenRouterProviderTransport implements ProviderTransport {
   }
 
   async getHeaders(): Promise<Record<string, string>> {
+    // Resolve the OpenRouter key through the authority (env → config → op://,
+    // lazy SDK). This is the single source of truth — no construction-time key.
+    const auth = await credentials.getRequestAuth("openrouter", { model: this.modelId });
     return {
-      Authorization: `Bearer ${this.apiKey}`,
+      ...auth.headers,
       "HTTP-Referer": "https://claudish.com",
       "X-Title": "Claudish - OpenRouter Proxy",
     };

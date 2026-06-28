@@ -13,6 +13,54 @@ import {
   stubAdvisorAdvice,
   swapAdvisorToolInBody,
 } from "./native-handler-advisor.js";
+import { credentials } from "../auth/credentials/authority.js";
+import { hasOpSources, resolveOpKeyForEnvVars } from "../auth/credentials/op-source.js";
+import { getApiKey } from "../profile-config.js";
+
+/**
+ * Resolve the advisor provider keys through the credential layer (env → config →
+ * op://) rather than raw process.env reads, so the multi-model advisor path goes
+ * through the single layer like every other signer.
+ *
+ * openrouter/openai resolve via the authority (their providers sign with a plain
+ * API key). google is special: the "google" authority alias is the Gemini Code
+ * Assist OAuth credential (an OAuth token, NOT the GEMINI_API_KEY the advisor's
+ * direct Gemini call needs), so google resolves the raw GEMINI/GOOGLE_API_KEY
+ * through env → config → op:// directly.
+ */
+async function resolveAdvisorKeys(): Promise<{
+  openrouter?: string;
+  google?: string;
+  openai?: string;
+}> {
+  const keyFromAuthority = async (name: string): Promise<string | undefined> => {
+    try {
+      const auth = await credentials.getRequestAuth(name, { model: "" });
+      const k =
+        auth.headers.Authorization?.replace(/^Bearer\s+/i, "") || auth.headers["x-api-key"];
+      return k || undefined;
+    } catch {
+      return undefined;
+    }
+  };
+  const geminiKey = async (): Promise<string | undefined> => {
+    const local = process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY || getApiKey("GEMINI_API_KEY");
+    if (local) return local;
+    if (hasOpSources()) {
+      const r = await resolveOpKeyForEnvVars(new Set(["GEMINI_API_KEY", "GOOGLE_API_KEY"]), {
+        onAuthFailure: "skip",
+      });
+      return r.GEMINI_API_KEY || r.GOOGLE_API_KEY || undefined;
+    }
+    return undefined;
+  };
+  const [openrouter, google, openai] = await Promise.all([
+    keyFromAuthority("openrouter"),
+    geminiKey(),
+    keyFromAuthority("openai"),
+  ]);
+  return { openrouter, google, openai };
+}
 
 export class NativeHandler implements ModelHandler {
   private apiKey?: string;
@@ -69,15 +117,17 @@ export class NativeHandler implements ModelHandler {
         if (pendingIds.length > 0) {
           const adviceMap = new Map<string, string>();
           for (const id of pendingIds) {
+            // Resolve advisor provider keys through the credential authority
+            // (env → config → op://) — the single source of truth — instead of
+            // raw process.env reads. anthropic comes from the inbound request.
+            const advisorKeys = await resolveAdvisorKeys();
             const advice = await fetchMultiModelAdvice(
               id,
               payload.messages as any[],
               advisorCfg.models,
               advisorCfg.collector ?? null,
               {
-                openrouter: process.env.OPENROUTER_API_KEY,
-                google: process.env.GOOGLE_API_KEY ?? process.env.GEMINI_API_KEY,
-                openai: process.env.OPENAI_API_KEY,
+                ...advisorKeys,
                 anthropic: originalHeaders["x-api-key"],
               },
             );
@@ -155,12 +205,18 @@ export class NativeHandler implements ModelHandler {
     if (originalHeaders["x-api-key"]) {
       headers["x-api-key"] = originalHeaders["x-api-key"];
     }
-    if (
-      !originalHeaders["authorization"] &&
-      !originalHeaders["x-api-key"] &&
-      this.apiKey
-    ) {
-      headers["x-api-key"] = this.apiKey;
+    if (!originalHeaders["authorization"] && !originalHeaders["x-api-key"]) {
+      // No inbound auth → fall back to the construction-time key, else resolve
+      // ANTHROPIC_API_KEY through the credential authority (env → config → op://),
+      // so even the native fallback is sourced from the single layer.
+      let fallbackKey = this.apiKey;
+      if (!fallbackKey) {
+        const auth = await credentials.getRequestAuth("native-anthropic", { model: target });
+        fallbackKey = auth.headers["x-api-key"];
+      }
+      if (fallbackKey) {
+        headers["x-api-key"] = fallbackKey;
+      }
     }
     if (originalHeaders["anthropic-beta"]) {
       const incomingBeta = originalHeaders["anthropic-beta"];

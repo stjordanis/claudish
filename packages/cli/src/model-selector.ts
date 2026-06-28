@@ -851,6 +851,10 @@ async function getProviderChoices() {
  */
 const PROVIDER_MODEL_PREFIX: Record<string, string> = {
   google: "google@",
+  // Gemini Code Assist (OAuth) maps to the google owner catalog, so the picker
+  // renders model rows for it — it needs its own prefix or rows would emit a
+  // bare id that doesn't route to the Code Assist gateway.
+  "gemini-codeassist": "go@",
   openai: "oai@",
   "openai-codex": "cx@",
   "x-ai": "x-ai@",

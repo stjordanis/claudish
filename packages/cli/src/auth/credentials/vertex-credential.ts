@@ -19,6 +19,14 @@ export class VertexCredentialProvider implements CredentialProvider {
   }
 
   async getRequestAuth(_ctx: RequestAuthContext): Promise<RequestAuth> {
+    // Express mode: VERTEX_API_KEY is a plain bearer key (standard Gemini
+    // endpoint). It is the authority-sourced credential for Express, so the
+    // proxy no longer reads process.env.VERTEX_API_KEY directly at sign-time.
+    const expressKey = process.env.VERTEX_API_KEY;
+    if (expressKey) {
+      return { headers: { Authorization: `Bearer ${expressKey}` } };
+    }
+    // ADC / service-account mode: mint an OAuth access token.
     const token = await getVertexAuthManager().getAccessToken();
     return { headers: { Authorization: `Bearer ${token}` } };
   }

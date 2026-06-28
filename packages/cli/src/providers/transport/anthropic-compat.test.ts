@@ -14,7 +14,7 @@
 import { describe, it, expect } from "bun:test";
 import { AnthropicCompatProvider } from "./anthropic-compat.js";
 import { AnthropicAPIFormat } from "../../adapters/anthropic-api-format.js";
-import type { RemoteProvider } from "../../../handlers/shared/remote-provider-types.js";
+import type { RemoteProvider } from "../../handlers/shared/remote-provider-types.js";
 
 const TEST_API_KEY = "test-key-abc123";
 

@@ -125,7 +125,14 @@ export class ApiKeyCredentialProvider implements CredentialProvider {
           this.cachedKey = value;
           return value;
         }
+        // op source EXISTS but resolution came back empty — this can be a
+        // TRANSIENT op-auth failure (onAuthFailure:"skip" swallows it). Do NOT
+        // cache the miss, or a single early failure would mark the provider
+        // permanently unavailable. Return "" WITHOUT caching so the next call
+        // retries (e.g. once the 1Password desktop handshake completes).
+        return "";
       }
+      // No op source at all → the empty result is stable; safe to cache.
       this.cachedKey = "";
       return "";
     })();

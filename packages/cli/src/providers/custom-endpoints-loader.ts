@@ -22,6 +22,7 @@ import {
   type CustomEndpointComplex,
 } from "../config-schema.js";
 import type { ClaudishProfileConfig } from "../profile-config.js";
+import { credentials } from "../auth/credentials/authority.js";
 import type {
   ProviderDefinition,
   TransportType,
@@ -67,6 +68,14 @@ export function loadCustomEndpoints(config: ClaudishProfileConfig): LoadResult {
       const profile = buildProviderProfile(validated);
       registerRuntimeProvider(def);
       registerRuntimeProfile(name, profile);
+      // Register the custom endpoint in the credential authority too, so its key
+      // (CUSTOM_<NAME>_KEY — including op:// values) resolves through the single
+      // authority like every other provider, instead of an out-of-band env read.
+      credentials.registerApiKeyProvider({
+        name: def.name,
+        envVar: def.apiKeyEnvVar,
+        authScheme: def.authScheme === "x-api-key" ? "x-api-key" : "bearer",
+      });
       result.registered++;
     } catch (err) {
       const message =
@@ -136,12 +145,14 @@ function buildProviderDefinition(
 function buildProviderProfile(ep: CustomEndpoint): ProviderProfile {
   return {
     createHandler(ctx: ProfileContext): ModelHandler | null {
-      // Env-first: an op:// apiKey is pre-resolved at startup
-      // (index.ts applyCustomEndpointOpKeys) into CUSTOM_<NAME>_KEY, so we read
-      // that first and only fall back to the literal/${VAR} resolver. This keeps
-      // handler construction synchronous (no SDK await on the hot path).
-      const apiKey =
-        process.env[ctx.provider.apiKeyEnvVar] || resolveCustomEndpointApiKey(ep);
+      // The key is resolved through the credential authority (proxy-server passes
+      // it as ctx.apiKey via getRequestAuth — env → config → op://, lazy SDK).
+      // Fall back to the literal/${VAR} resolver only when the authority yielded
+      // nothing (e.g. a plain ${VAR} apiKey the authority's env read also covers,
+      // or a non-routed construction path). This is the single source of truth —
+      // an op:// custom apiKey now resolves correctly instead of signing the
+      // literal "op://…" string.
+      const apiKey = ctx.apiKey || resolveCustomEndpointApiKey(ep);
       if (ep.kind === "simple") {
         return buildSimpleHandler(ep, ctx, apiKey);
       }
