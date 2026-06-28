@@ -64,13 +64,21 @@ export function wrapAnthropicError(
 export function extractProviderMessage(body: any): string {
   if (body == null) return "";
   if (typeof body === "string") return body;
-  const msg =
-    body?.error?.message ||
-    body?.message ||
-    (typeof body?.error === "string" ? body.error : undefined) ||
-    body?.detail ||
-    body?.error?.detail;
-  if (typeof msg === "string" && msg.length > 0) return msg;
+  const candidates = [
+    body?.error?.message,
+    body?.message,
+    typeof body?.error === "string" ? body.error : undefined,
+    body?.error?.detail,
+    body?.detail,
+  ];
+  for (const c of candidates) {
+    if (typeof c === "string" && c.length > 0) return c;
+    // FastAPI validation errors use `detail: [{ msg, loc, ... }]`.
+    if (Array.isArray(c)) {
+      const first = c.find((e) => typeof e?.msg === "string" && e.msg.length > 0);
+      if (first) return first.msg;
+    }
+  }
   try {
     return JSON.stringify(body);
   } catch {
@@ -87,6 +95,19 @@ export function extractProviderMessage(body: any): string {
  * Transient errors (plain rate limits, overloaded, 5xx blips) are NOT terminal:
  * those legitimately recover on retry, so we leave the retryable status intact.
  *
+ * Substring matching is deliberately CONSERVATIVE. A false positive here is
+ * worse than a false negative: classifying a transient error as terminal stops
+ * a retry that would have succeeded, whereas missing a terminal error only
+ * costs a few wasted retries before the final attempt surfaces the real reason.
+ * So:
+ *   - Quota/billing phrases (`insufficient balance`, `out of credits`, …) are
+ *     specific enough to trust under ANY status — no transient blip phrases it
+ *     that way.
+ *   - Generic English phrases (`not supported`, `subscription … expired`) are
+ *     gated to non-5xx statuses, because a 5xx is a SERVER failure (retry-worthy)
+ *     and such prose can legitimately appear inside a transient 5xx body
+ *     (e.g. "Retry-After not supported by upstream gateway; service overloaded").
+ *
  * @param status     - upstream HTTP status
  * @param bodyText   - raw upstream error body (string)
  * @param terminal429 - result of provider-specific isTerminal429(bodyText)
@@ -102,7 +123,9 @@ export function isTerminalError(
   if (status === 429 && terminal429) return true;
 
   const lower = (bodyText || "").toLowerCase();
-  // Billing/quota signals can arrive under non-429 statuses too.
+
+  // Quota/billing signals: specific enough to trust under any status. A
+  // transient overload never describes itself as "insufficient balance".
   if (
     lower.includes("insufficient balance") ||
     lower.includes("insufficient_balance") ||
@@ -111,19 +134,30 @@ export function isTerminalError(
     lower.includes("billing_not_active") ||
     lower.includes("billing not active") ||
     lower.includes("out of credits") ||
+    lower.includes("no credits remaining") ||
     lower.includes("exceeded your current quota") ||
-    (lower.includes("subscription") && lower.includes("expired"))
+    lower.includes("quota_exceeded")
   ) {
     return true;
   }
-  // Model-not-supported / not-found errors won't recover on retry.
-  if (
-    lower.includes("not supported") ||
-    lower.includes("unsupported model") ||
-    lower.includes("model not found") ||
-    lower.includes("model_not_found")
-  ) {
-    return true;
+
+  // Generic-English terminal phrases (model-unsupported, expired subscription).
+  // These appear in real prose, so gate them to non-5xx statuses: a 5xx is a
+  // server failure that should retry, and "not supported" can show up inside a
+  // transient gateway message. A model/account problem comes back as 4xx.
+  const isServerError = status >= 500;
+  if (!isServerError) {
+    if (
+      lower.includes("not supported") ||
+      lower.includes("unsupported model") ||
+      lower.includes("unsupported_model") ||
+      lower.includes("model not found") ||
+      lower.includes("model_not_found") ||
+      lower.includes("unknown model") ||
+      (lower.includes("subscription") && lower.includes("expired"))
+    ) {
+      return true;
+    }
   }
   return false;
 }

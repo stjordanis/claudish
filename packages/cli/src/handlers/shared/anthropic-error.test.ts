@@ -166,10 +166,29 @@ describe("extractProviderMessage", () => {
     expect(extractProviderMessage({ error: "raw error string" })).toBe("raw error string");
   });
 
-  it("pulls FastAPI-style detail", () => {
+  it("pulls FastAPI-style string detail", () => {
     expect(extractProviderMessage({ detail: "model gpt-5 not supported" })).toBe(
       "model gpt-5 not supported"
     );
+  });
+
+  it("pulls the msg out of a FastAPI structured detail array", () => {
+    expect(extractProviderMessage({ detail: [{ msg: "Missing API key", loc: ["header"] }] })).toBe(
+      "Missing API key"
+    );
+  });
+
+  it("pulls error.detail (nested) before falling back to JSON", () => {
+    expect(
+      extractProviderMessage({ error: { detail: "No active subscription for fugu-ultra" } })
+    ).toBe("No active subscription for fugu-ultra");
+  });
+
+  it("prefers error.message over a less-specific detail", () => {
+    // OpenAI-style nested message wins over a sibling detail.
+    expect(
+      extractProviderMessage({ error: { message: "real message", detail: "ignore me" } })
+    ).toBe("real message");
   });
 
   it("falls back to JSON for structured bodies with no message", () => {
@@ -196,26 +215,68 @@ describe("isTerminalError", () => {
     expect(isTerminalError(429, "rate limit exceeded, slow down", false)).toBe(false);
   });
 
-  it("does NOT treat a transient 503/overloaded as terminal", () => {
+  it("does NOT treat a transient 503/overloaded/500 as terminal", () => {
     expect(isTerminalError(503, "service overloaded", false)).toBe(false);
     expect(isTerminalError(500, "internal server error", false)).toBe(false);
+    expect(isTerminalError(502, "bad gateway", false)).toBe(false);
   });
 
-  it("catches billing/quota signals under non-429 statuses", () => {
+  // Quota/billing phrases are specific enough to trust under ANY status —
+  // including a 500, where a transient blip would never phrase itself this way.
+  // Each case uses a NON-auth status so it can only pass via the keyword path
+  // (a 401/403 would short-circuit to terminal and hide a broken matcher).
+  it("catches billing/quota signals via the keyword path (not via status)", () => {
     expect(isTerminalError(402, "insufficient balance", false)).toBe(true);
     expect(isTerminalError(400, "out of credits", false)).toBe(true);
-    expect(isTerminalError(403, "billing_not_active", false)).toBe(true);
+    expect(isTerminalError(500, '{"error":{"message":"billing_not_active"}}', false)).toBe(true);
+    expect(isTerminalError(500, '{"error":{"message":"insufficient_quota"}}', false)).toBe(true);
+    expect(isTerminalError(500, '{"detail":"No credits remaining"}', false)).toBe(true);
   });
 
-  it("catches expired-subscription wording", () => {
-    expect(isTerminalError(403, "Your subscription has expired", false)).toBe(true);
-    // Only one of the two words is not enough
-    expect(isTerminalError(500, "subscription active", false)).toBe(false);
+  it("matches quota keywords case-insensitively", () => {
+    expect(isTerminalError(500, '{"error":{"message":"INSUFFICIENT BALANCE"}}', false)).toBe(true);
   });
 
-  it("catches model-not-supported errors", () => {
+  it("catches model-not-supported errors on 4xx statuses", () => {
     expect(isTerminalError(400, "model gpt-5 is not supported", false)).toBe(true);
     expect(isTerminalError(404, "model_not_found", false)).toBe(true);
+    expect(isTerminalError(400, '{"error":{"message":"Unknown model: fugu-ultra"}}', false)).toBe(
+      true
+    );
+    expect(
+      isTerminalError(404, '{"error":{"code":"unsupported_model"}}', false)
+    ).toBe(true);
+  });
+
+  it("catches expired-subscription wording on a 4xx status", () => {
+    expect(isTerminalError(400, "Your subscription has expired", false)).toBe(true);
+    // Only one of the two words is not enough
+    expect(isTerminalError(400, "subscription active", false)).toBe(false);
+  });
+
+  // --- FALSE-POSITIVE GUARDS (the load-bearing correctness cases) ---
+  // Generic English ("not supported", "subscription ... expired") can appear
+  // inside a TRANSIENT 5xx body. Classifying those as terminal would stop a
+  // retry that would have succeeded — strictly worse than a wasted retry.
+  it("does NOT classify a transient 5xx as terminal just because its prose contains 'not supported'", () => {
+    expect(
+      isTerminalError(
+        503,
+        "Retry-After header not supported by upstream gateway; service overloaded",
+        false
+      )
+    ).toBe(false);
+  });
+
+  it("does NOT classify a transient 5xx as terminal for incidental 'subscription ... expired' prose", () => {
+    expect(isTerminalError(503, "subscription usage cache expired; retry later", false)).toBe(
+      false
+    );
+  });
+
+  it("does NOT classify a transient 5xx 'unknown model' as terminal (server failure, retry)", () => {
+    // A 5xx is a server failure; model-routing problems come back as 4xx.
+    expect(isTerminalError(500, "temporary unknown model routing error", false)).toBe(false);
   });
 });
 
@@ -253,15 +314,27 @@ describe("buildSurfacedErrorMessage", () => {
     expect(msg.match(/out of credits/g)?.length).toBe(1);
   });
 
-  it("truncates absurdly long upstream messages", () => {
-    const huge = "x".repeat(2000);
+  it("does NOT truncate a message exactly at the 600-char boundary", () => {
+    const exact = "x".repeat(600);
     const msg = buildSurfacedErrorMessage({
       providerDisplayName: "X",
       status: 500,
       hint: "Server error.",
-      providerMessage: huge,
+      providerMessage: exact,
     });
-    expect(msg.length).toBeLessThan(700);
-    expect(msg).toContain("…");
+    expect(msg).not.toContain("…");
+    expect(msg).toContain(exact);
+  });
+
+  it("truncates a message one char past the boundary to 600 + ellipsis", () => {
+    const over = "x".repeat(601);
+    const msg = buildSurfacedErrorMessage({
+      providerDisplayName: "X",
+      status: 500,
+      hint: "Server error.",
+      providerMessage: over,
+    });
+    expect(msg).toContain(`${"x".repeat(600)}…`);
+    expect(msg).not.toContain("x".repeat(601));
   });
 });

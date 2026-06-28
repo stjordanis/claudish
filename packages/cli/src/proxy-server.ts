@@ -18,6 +18,7 @@ import {
   createUrlProvider,
 } from "./providers/provider-registry.js";
 import { parseModelSpec } from "./providers/model-parser.js";
+import { API_KEY_MAP } from "./providers/api-key-map.js";
 import { resolveRemoteProvider } from "./providers/remote-provider-registry.js";
 import { resolveModelProvider } from "./providers/provider-resolver.js";
 import { warmPricingCache } from "./services/pricing-cache.js";
@@ -36,6 +37,20 @@ import { createHandlerForProvider } from "./providers/provider-profiles.js";
 import { loadCustomEndpoints } from "./providers/custom-endpoints-loader.js";
 import { credentials } from "./auth/credentials/authority.js";
 import { loadConfig } from "./profile-config.js";
+
+/**
+ * Routing failures are TERMINAL — no provider can serve the request (missing
+ * credential, empty chain, unknown model). They must surface to the client as a
+ * non-retryable HTTP 400, not a retryable 500: a 500 makes Claude Code loop on
+ * "API error · Retrying · attempt N/10" and hide the real cause. Tagging the
+ * error lets the request handlers map it to 400 with the actionable message.
+ */
+class RoutingError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RoutingError";
+  }
+}
 
 /**
  * A single slot-routing entry for `claudish serve`. Claude Desktop sends
@@ -495,7 +510,7 @@ export async function createProxyServer(
           const message = plan.hint
             ? `[Route] ${plan.reason}\n${plan.hint}`
             : `[Route] ${plan.reason}`;
-          throw new Error(message);
+          throw new RoutingError(message);
         }
       }
     }
@@ -529,7 +544,32 @@ export async function createProxyServer(
       return nativeHandler;
     }
 
-    // 7. OpenRouter Handler (default for any model with "/" or explicit provider not matched above)
+    // 6b. Explicit non-OpenRouter spec that produced no handler above means its
+    // credential is MISSING — its key didn't resolve, so getRemoteProviderHandler
+    // returned null. Per the routing contract, an explicit provider@model must
+    // NOT silently fall through to OpenRouter (defaultProvider/last-resort
+    // fallback applies to BARE names only). Silently routing e.g. sc@fugu-ultra
+    // to OpenRouter caused it to catalog-resolve "fugu-ultra" → an xAI model
+    // (status line "Xai") + a confusing "API error", hiding the real cause: no
+    // Sakana key. Fail loudly with an actionable hint instead.
+    if (hasExplicitProvider) {
+      const parsedExplicit = parseModelSpec(target);
+      // openrouter@... legitimately uses the OpenRouter handler below.
+      if (parsedExplicit.provider !== "openrouter") {
+        const keyInfo = API_KEY_MAP[parsedExplicit.provider];
+        const keyNames = keyInfo
+          ? [keyInfo.envVar, ...(keyInfo.aliases ?? [])].join(" or ")
+          : undefined;
+        const hint = keyNames
+          ? `No API key for provider "${parsedExplicit.provider}". Set ${keyNames} (env, config, or 1Password import).`
+          : `No API key for provider "${parsedExplicit.provider}".`;
+        throw new RoutingError(
+          `Explicit model "${target}" could not be routed — its provider has no credential. ${hint}`
+        );
+      }
+    }
+
+    // 7. OpenRouter Handler (default for any model with "/" or explicit OpenRouter spec)
     return getOpenRouterHandler(target, invocationMode);
   };
 
@@ -648,6 +688,9 @@ export async function createProxyServer(
         return c.json({ input_tokens: Math.ceil(txt.length / 4) });
       }
     } catch (e) {
+      if (e instanceof RoutingError) {
+        return c.json(wrapAnthropicError(400, e.message, "invalid_request_error"), 400);
+      }
       return c.json(wrapAnthropicError(500, String(e)), 500);
     }
   });
@@ -661,6 +704,12 @@ export async function createProxyServer(
       return handler.handle(c, body);
     } catch (e) {
       log(`[Proxy] Error: ${e}`);
+      // Routing failures are terminal — surface as a non-retryable 400 so the
+      // client shows the real reason (e.g. missing key) instead of looping on
+      // "API error · Retrying". Other errors stay 500.
+      if (e instanceof RoutingError) {
+        return c.json(wrapAnthropicError(400, e.message, "invalid_request_error"), 400);
+      }
       return c.json(wrapAnthropicError(500, String(e)), 500);
     }
   });
