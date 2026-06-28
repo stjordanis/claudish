@@ -11,7 +11,13 @@
  * This format handles Codex models only. All other OpenAI models use OpenAIAPIFormat.
  */
 
-import { BaseAPIFormat, type AdapterResult, matchesModelFamily } from "./base-api-format.js";
+import {
+  BaseAPIFormat,
+  type AdapterResult,
+  type EffortLevel,
+  matchesModelFamily,
+} from "./base-api-format.js";
+import { log } from "../logger.js";
 import type { StreamFormat } from "../providers/transport/types.js";
 
 /**
@@ -81,6 +87,11 @@ export class CodexAPIFormat extends BaseAPIFormat {
       return rest;
     });
 
+    // BUG FIX: this used to hardcode reasoning.effort = "medium", ignoring
+    // Claude Code's effort signal entirely. Now read it and clamp per the
+    // Codex (Responses API) model gates; default stays "medium" when absent.
+    const effort = this.resolveCodexEffort(claudeRequest);
+
     const payload: any = {
       model: normalizedModel,
       input: strippedMessages,
@@ -88,7 +99,7 @@ export class CodexAPIFormat extends BaseAPIFormat {
       store: false,
       include: ["reasoning.encrypted_content"],
       reasoning: {
-        effort: "medium",
+        effort,
         summary: "auto",
       },
       text: {
@@ -123,6 +134,55 @@ export class CodexAPIFormat extends BaseAPIFormat {
   }
 
   // ─── Private helpers ───────────────────────────────────────────────
+
+  /**
+   * Resolve Claude Code's effort signal to a Codex Responses-API
+   * `reasoning.effort` value. Codex models accept the OpenAI set
+   * `none | low | medium | high | xhigh` but NOT `minimal` (codex drops it)
+   * and `max` doesn't exist (ceiling is xhigh). `xhigh` is documented only on
+   * gpt-5.1-codex-max. `none` is valid on the gpt-5.1-codex family.
+   *
+   * Default is "medium" when Claude Code sends no effort signal (the historical
+   * Codex default — preserved so behavior is unchanged for non-effort requests).
+   */
+  private resolveCodexEffort(claudeRequest: any): string {
+    const level = this.resolveEffortLevel(claudeRequest);
+    if (!level) return "medium"; // historical default
+
+    const value = this.clampCodexEffort(level);
+    log(`[CodexAPIFormat] reasoning.effort -> ${value} (from ${level}) for ${this.modelId}`);
+    return value;
+  }
+
+  /** gpt-5.1-codex-max (and later codex-max) — the only codex models accepting xhigh. */
+  private acceptsXhigh(): boolean {
+    return /codex.*max/.test(this.modelId.toLowerCase());
+  }
+
+  /** gpt-5.1-codex family (5.1+) — accepts `none`. */
+  private isCodex51Plus(): boolean {
+    return /gpt-5\.[1-9].*codex/.test(this.modelId.toLowerCase());
+  }
+
+  private clampCodexEffort(level: EffortLevel): string {
+    switch (level) {
+      case "none":
+        // `none` valid on the gpt-5.1-codex family; older codex → low.
+        return this.isCodex51Plus() ? "none" : "low";
+      case "minimal":
+        return "low"; // codex drops `minimal`
+      case "low":
+      case "medium":
+      case "high":
+        return level;
+      case "xhigh":
+        return this.acceptsXhigh() ? "xhigh" : "high";
+      case "max":
+        return this.acceptsXhigh() ? "xhigh" : "high"; // no `max` on codex
+      default:
+        return "medium";
+    }
+  }
 
   /**
    * Convert Chat Completions format messages to Responses API format.

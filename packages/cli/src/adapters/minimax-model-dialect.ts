@@ -26,10 +26,13 @@ export class MiniMaxModelDialect extends BaseAPIFormat {
   }
 
   /**
-   * Handle request preparation — clamp temperature to MiniMax's accepted range.
-   * The valid range is the TEMPERATURE_RANGE constant sourced from MiniMax's published API docs.
-   * The standard `thinking` parameter is supported natively by MiniMax's Anthropic-compatible
-   * endpoint, so no conversion is needed here.
+   * Handle request preparation — clamp temperature to MiniMax's accepted range,
+   * and map Claude Code's effort to MiniMax's `thinking` toggle.
+   *
+   * MiniMax's enable value is `adaptive` (NOT "enabled"). On the Anthropic-compat
+   * endpoint: none → `{type:"disabled"}` (effective only on M3; M2.x is
+   * always-on and ignores it); every other level → `{type:"adaptive"}`. The raw
+   * <think> round-trip in history is NOT touched here — only the request knob.
    */
   override prepareRequest(request: any, originalRequest: any): any {
     if (request.temperature !== undefined) {
@@ -44,6 +47,13 @@ export class MiniMaxModelDialect extends BaseAPIFormat {
         );
         request.temperature = TEMPERATURE_RANGE.max;
       }
+    }
+
+    const effort = this.resolveEffortLevel(originalRequest);
+    if (effort) {
+      const type = effort === "none" ? "disabled" : "adaptive";
+      request.thinking = { type };
+      log(`[MiniMaxModelDialect] effort ${effort} -> thinking.type: ${type} for ${this.modelId}`);
     }
 
     return request;

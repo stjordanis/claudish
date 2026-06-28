@@ -6,7 +6,12 @@
  * - Maps thinking → enable_thinking + thinking_budget params
  */
 
-import { BaseAPIFormat, AdapterResult, matchesModelFamily } from "./base-api-format.js";
+import {
+  BaseAPIFormat,
+  AdapterResult,
+  type EffortLevel,
+  matchesModelFamily,
+} from "./base-api-format.js";
 import { log } from "../logger.js";
 
 // Qwen special tokens that should be stripped from output
@@ -50,25 +55,55 @@ export class QwenModelDialect extends BaseAPIFormat {
   }
 
   /**
-   * Handle request preparation - specifically for mapping reasoning parameters
+   * Handle request preparation — map Claude Code's effort to Qwen's
+   * `enable_thinking` + `thinking_budget`. Qwen has no discrete effort enum;
+   * none/minimal disable thinking, everything else enables it with a token
+   * budget derived from the level (claudish conventions, research §4.3).
    */
   override prepareRequest(request: any, originalRequest: any): any {
-    if (originalRequest.thinking) {
-      const { budget_tokens } = originalRequest.thinking;
+    const effort = this.resolveEffortLevel(originalRequest);
 
-      // Qwen specific parameters
-      request.enable_thinking = true;
-      request.thinking_budget = budget_tokens;
+    if (effort) {
+      if (effort === "none" || effort === "minimal") {
+        request.enable_thinking = false;
+        log(`[QwenModelDialect] effort ${effort} -> enable_thinking: false for ${this.modelId}`);
+      } else {
+        request.enable_thinking = true;
+        const budget = this.effortToThinkingBudget(effort);
+        if (budget !== undefined) {
+          request.thinking_budget = budget;
+        }
+        log(
+          `[QwenModelDialect] effort ${effort} -> enable_thinking: true, thinking_budget: ${budget ?? "(model max)"} for ${this.modelId}`
+        );
+      }
 
-      log(
-        `[QwenModelDialect] Mapped budget ${budget_tokens} -> enable_thinking: true, thinking_budget: ${budget_tokens}`
-      );
-
-      // Cleanup: Remove raw thinking object
-      delete request.thinking;
+      // Cleanup: remove raw thinking object so it doesn't double-send.
+      if (originalRequest.thinking) delete request.thinking;
     }
 
     return request;
+  }
+
+  /**
+   * Qwen `thinking_budget` per effort level (claudish convention). `max` omits
+   * the budget so Qwen uses the model's full max CoT length.
+   */
+  private effortToThinkingBudget(effort: EffortLevel): number | undefined {
+    switch (effort) {
+      case "low":
+        return 2048;
+      case "medium":
+        return 8192;
+      case "high":
+        return 24576;
+      case "xhigh":
+        return 38912;
+      case "max":
+        return undefined; // omit → model max
+      default:
+        return 8192;
+    }
   }
 
   shouldHandle(modelId: string): boolean {

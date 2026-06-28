@@ -10,7 +10,13 @@
  * This dialect translates that to Claude Code's expected tool_calls format.
  */
 
-import { BaseAPIFormat, AdapterResult, ToolCall, matchesModelFamily } from "./base-api-format.js";
+import {
+  BaseAPIFormat,
+  AdapterResult,
+  ToolCall,
+  type EffortLevel,
+  matchesModelFamily,
+} from "./base-api-format.js";
 import { log } from "../logger.js";
 import { lookupModel } from "./model-catalog.js";
 
@@ -78,32 +84,96 @@ export class GrokModelDialect extends BaseAPIFormat {
   }
 
   /**
-   * Handle request preparation - specifically for mapping reasoning parameters
+   * Handle request preparation — map Claude Code's effort to xAI
+   * `reasoning_effort`, gated per model tier. Grok rejects the param with HTTP
+   * 400 on models that don't accept it (grok-4/grok-4-0709, non-reasoning,
+   * grok-2), so those are STRIPPED, never passed.
    */
   override prepareRequest(request: any, originalRequest: any): any {
-    const modelId = this.modelId || "";
+    const effort = this.resolveEffortLevel(originalRequest);
 
-    if (originalRequest.thinking) {
-      // Only Grok 3 Mini supports reasoning_effort
-      const supportsReasoningEffort = modelId.includes("mini");
-
-      if (supportsReasoningEffort) {
-        // Map budget to reasoning_effort (supported: low, high)
-        // using 20k as threshold based on typical extensive reasoning
-        const { budget_tokens } = originalRequest.thinking;
-        const effort = budget_tokens >= 20000 ? "high" : "low";
-
-        request.reasoning_effort = effort;
-        log(`[GrokModelDialect] Mapped budget ${budget_tokens} -> reasoning_effort: ${effort}`);
+    if (effort) {
+      const value = this.effortToReasoningEffort(effort);
+      if (value) {
+        request.reasoning_effort = value;
+        log(`[GrokModelDialect] reasoning_effort -> ${value} (from ${effort}) for ${this.modelId}`);
       } else {
-        log(`[GrokModelDialect] Model ${modelId} does not support reasoning params. Stripping.`);
+        log(
+          `[GrokModelDialect] Model ${this.modelId} does not accept reasoning_effort — stripping.`
+        );
+        if (request.reasoning_effort !== undefined) delete request.reasoning_effort;
       }
-
-      // Always remove raw thinking object for Grok to avoid API errors
-      delete request.thinking;
     }
 
+    // Always remove raw thinking object for Grok to avoid API errors.
+    if (request.thinking) delete request.thinking;
+
     return request;
+  }
+
+  /**
+   * Map a canonical effort level to a Grok `reasoning_effort` value, or
+   * undefined when this model accepts no reasoning_effort param (→ strip).
+   *
+   * Tiers (xAI docs / research §2):
+   *  - grok-3-mini (*mini*): accepts low|high ONLY.
+   *  - grok-4.3 / grok-4-fast-reasoning / grok-4-1-fast-reasoning: none|low|medium|high.
+   *  - grok-4 / grok-4-0709 / *non-reasoning* / grok-2: NOT accepted → strip.
+   */
+  private effortToReasoningEffort(effort: EffortLevel): string | undefined {
+    const model = this.modelId.toLowerCase();
+
+    // Non-reasoning + original grok-4 + grok-2 reject the param entirely.
+    if (
+      model.includes("non-reasoning") ||
+      model.includes("grok-2") ||
+      this.isOriginalGrok4()
+    ) {
+      return undefined;
+    }
+
+    // grok-3-mini tier: low | high only.
+    if (model.includes("mini")) {
+      switch (effort) {
+        case "high":
+        case "xhigh":
+        case "max":
+          return "high";
+        default:
+          // none/minimal/low/medium → low (mini has no none/medium).
+          return "low";
+      }
+    }
+
+    // grok-4.3 / fast-reasoning tier: none | low | medium | high.
+    switch (effort) {
+      case "none":
+        return "none";
+      case "minimal":
+      case "low":
+        return "low";
+      case "medium":
+        return "medium";
+      case "high":
+      case "xhigh":
+      case "max":
+        return "high";
+      default:
+        return "high";
+    }
+  }
+
+  /**
+   * Original grok-4 / grok-4-0709 reason automatically and 400 on the param.
+   * Matches grok-4 and grok-4-0709 but NOT grok-4.3, grok-4-fast-*,
+   * grok-4-1-fast-* (those are reasoning-capable and DO accept the param).
+   */
+  private isOriginalGrok4(): boolean {
+    const model = this.modelId.toLowerCase();
+    if (model.includes("fast") || model.includes("mini")) return false;
+    // grok-4 or grok-4-0709, but NOT grok-4.<n> (e.g. grok-4.3) — the char
+    // right after "grok-4" must not be a dot or digit.
+    return /grok-4(?![.\d])/.test(model);
   }
 
   /**

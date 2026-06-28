@@ -497,12 +497,14 @@ describe("Adapter: AnthropicAPIFormat", () => {
 // ─── Model Adapter Quirks Tests ─────────────────────────────────────────────
 
 describe("Model Adapter Quirks", () => {
-  test("MiniMaxModelDialect: native thinking passthrough (no reasoning_split)", async () => {
+  test("MiniMaxModelDialect: thinking maps to a {type} toggle (never reasoning_split)", async () => {
     const { MiniMaxModelDialect } = await import("./adapters/minimax-model-dialect.js");
     const adapter = new MiniMaxModelDialect("minimax-m2.5");
 
-    // MiniMax's Anthropic-compatible endpoint supports `thinking` natively.
-    // prepareRequest should NOT convert it to reasoning_split.
+    // MiniMax's Anthropic-compatible endpoint takes a BOOLEAN `thinking` toggle
+    // ({type:"adaptive"|"disabled"}), NOT a budget. A legacy budget hint
+    // resolves to an effort level which maps to the toggle. prepareRequest must
+    // NOT convert it to reasoning_split.
     const request: any = {
       model: "minimax-m2.5",
       messages: [],
@@ -512,7 +514,7 @@ describe("Model Adapter Quirks", () => {
 
     adapter.prepareRequest(request, original);
     expect(request.reasoning_split).toBeUndefined();
-    expect(request.thinking).toEqual({ budget_tokens: 10000 });
+    expect(request.thinking).toEqual({ type: "adaptive" });
   });
 
   test("MiniMaxModelDialect: temperature clamping — 0 → 0.01", async () => {

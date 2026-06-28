@@ -681,14 +681,18 @@ export const BUILTIN_PROVIDERS: ProviderDefinition[] = [
   },
 
   // ── Sakana Fugu Subscription Plan ──────────────────────────────────
-  // Same endpoint as the token plan (api.sakana.ai/v1/chat/completions — the
-  // only endpoint Sakana documents), but the BILLING MODE is selected by the
-  // KEY: Sakana issues separate keys for the subscription plan vs the
-  // pay-as-you-go API. So this provider has its OWN dedicated env var with NO
-  // alias back to SAKANA_API_KEY — aliasing it caused sc@ to silently use the
-  // pay-as-you-go key and bill against prepaid credits ("Prepaid credit balance
-  // is exhausted") despite the user being on a subscription. The subscription
-  // key MUST be supplied in SAKANA_CODING_API_KEY (no fallback to the PAYG key).
+  // Same endpoint as the API/token plan (api.sakana.ai — the only endpoint
+  // Sakana exposes), but the BILLING MODE is fixed at KEY CREATION: the Sakana
+  // console lets you mint a key as either a "subscription" key or an "API usage"
+  // (pay-as-you-go) key. They are GENUINELY DIFFERENT keys — a PAYG key draws
+  // from prepaid credits, a subscription key from the monthly plan allowance —
+  // so this provider has its OWN env var (SAKANA_CODING_API_KEY) with NO alias
+  // back to SAKANA_API_KEY. Aliasing caused sc@ to fall back to the PAYG key and
+  // bill prepaid credits ("Prepaid credit balance is exhausted") despite an
+  // active subscription. Mirrors the kimi-coding / minimax-coding split: own
+  // key, no PAYG fallback. (Sakana's public API reference shows only one
+  // SAKANA_API_KEY because the wire is identical; the subscription-vs-API
+  // distinction lives in the key, set at creation in the console.)
   {
     name: "sakana-coding",
     displayName: "Sakana Fugu Subscription",

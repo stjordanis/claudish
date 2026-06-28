@@ -3,7 +3,8 @@
  *
  * Handles GLM-specific quirks:
  * - Context window sizes per model variant (sourced from model-catalog.ts)
- * - Strips unsupported thinking params (GLM doesn't support explicit thinking API)
+ * - Hybrid models (GLM-4.5 family + GLM-4.6) take a `thinking:{type}` toggle;
+ *   older non-hybrid models (glm-4, glm-4-plus) reject thinking → strip.
  * - Vision support detection (sourced from model-catalog.ts)
  */
 
@@ -21,13 +22,36 @@ export class GLMModelDialect extends BaseAPIFormat {
   }
 
   override prepareRequest(request: any, originalRequest: any): any {
-    // GLM doesn't support thinking params via API
-    if (originalRequest.thinking) {
-      log(`[GLMModelDialect] Stripping thinking object (not supported by GLM API)`);
+    const effort = this.resolveEffortLevel(originalRequest);
+
+    // GLM-4.5 family + GLM-4.6 are HYBRID: they accept a boolean-style
+    // `thinking:{type:"enabled"|"disabled"}` toggle (no gradation). Older
+    // non-hybrid models (glm-4, glm-4-plus) reject `thinking` entirely.
+    if (effort && this.isHybridThinkingModel()) {
+      const type = effort === "none" || effort === "minimal" ? "disabled" : "enabled";
+      request.thinking = { type };
+      log(`[GLMModelDialect] effort ${effort} -> thinking.type: ${type} for ${this.modelId}`);
+      return request;
+    }
+
+    // Non-hybrid GLM (or no effort signal): strip any raw thinking object —
+    // these models reject it.
+    if (request.thinking) {
+      log(`[GLMModelDialect] Stripping thinking object (not supported by ${this.modelId})`);
       delete request.thinking;
     }
 
     return request;
+  }
+
+  /**
+   * GLM-4.5 family (glm-4.5/-air/-x/-airx/-flash) and GLM-4.6 are hybrid
+   * reasoning models that accept the `thinking` toggle. glm-4 / glm-4-plus and
+   * other pre-4.5 SKUs are non-hybrid and reject it.
+   */
+  private isHybridThinkingModel(): boolean {
+    const model = this.modelId.toLowerCase();
+    return /glm-4\.[56]/.test(model);
   }
 
   shouldHandle(modelId: string): boolean {
