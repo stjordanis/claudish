@@ -1,14 +1,16 @@
 /**
- * Equivalence pin test — the migration gate for Step 3 of the credential-authority
- * refactor.
+ * Equivalence pin test — guards the async credential authority against routing
+ * behavior drift.
  *
- * This test asserts that the NEW credential authority's sync readiness oracle
- * (`credentials.isAuthenticated(name)`) returns EXACTLY the same boolean as the
- * OLD routing oracle (`hasCredentialsForProvider(name)` in routing-rules.ts) for
- * a matrix of representative providers × credential states.
+ * This test asserts that the credential authority's ASYNC readiness oracle
+ * (`credentials.isAvailable(name)`) returns EXACTLY the same boolean as the
+ * routing oracle (`hasCredentialsForProvider(name)` in routing-rules.ts, also
+ * async now) AND the documented expected truth, for a matrix of representative
+ * providers × non-op credential states (env / alias / config / oauth / public /
+ * local). op-source is stubbed (hasOpSources → false) so the matrix stays
+ * hermetic — 1Password resolution is covered by the dedicated op-source tests.
  *
- * Until this test is green, the read sites must NOT be migrated — a divergence
- * here means migrating would change routing behavior.
+ * A divergence here means the async refactor changed routing behavior.
  *
  * ── Hermetic strategy ─────────────────────────────────────────────────────────
  * `os.homedir()` cannot be re-pointed at runtime in Bun, so we cannot create a
@@ -114,6 +116,8 @@ function resetState(): void {
 // it no longer depends on a mock reaching the singleton.
 
 const realProfileConfig = await import("../../profile-config.js");
+// The REAL op-source — used to reset its sync sniff after we rewrite the config.
+const { __resetSniffForTests: resetOpSniff } = await import("./op-source.js");
 
 function installModuleMocks(): void {
   mock.module("../oauth-registry.js", () => ({
@@ -127,6 +131,13 @@ function installModuleMocks(): void {
     getApiKey: (envVar: string) => state.configKeys.get(envVar),
     // isLocalProviderEnabled is intentionally NOT overridden — see the note above.
   }));
+
+  // NOTE: op-source.js is deliberately NOT mocked. The authority's isAvailable()
+  // consults op-source only when env/config/oauth all miss — and seedLocalProviders()
+  // strips every 1Password source from the seeded config, so op-source's sync sniff
+  // (hasOpSources) returns false and 1Password is never touched. Mocking op-source
+  // here would bleed into sibling files (Bun's mock.module is process-global) and
+  // break their REAL op-source tests in a full `bun test` run.
 }
 
 installModuleMocks();
@@ -160,7 +171,24 @@ function seedLocalProviders(): void {
     }
   }
   base.localProviders = Array.from(state.localEnabled).sort();
+  // STRIP every 1Password source from the seeded config so op-source's sync sniff
+  // (hasOpSources) returns false during the matrix — the authority then never
+  // consults 1Password for the "no creds → false" cases, keeping them hermetic
+  // WITHOUT mocking op-source.js (which would bleed into sibling test files in a
+  // full `bun test` run, since Bun's mock.module is process-global).
+  delete base.onepassword;
+  delete base.onepasswordEnvironments;
+  // Also strip any op:// values hiding in apiKeys / customEndpoints.
+  if (base.apiKeys && typeof base.apiKeys === "object") {
+    for (const [k, v] of Object.entries(base.apiKeys as Record<string, unknown>)) {
+      if (typeof v === "string" && v.startsWith("op://"))
+        delete (base.apiKeys as Record<string, unknown>)[k];
+    }
+  }
+  delete base.customEndpoints;
   writeFileSync(REAL_CONFIG_PATH, JSON.stringify(base, null, 2), "utf-8");
+  // Reset op-source's memoized sniff so it re-reads this (op-stripped) config.
+  resetOpSniff();
 }
 
 /** Restore the user's real global config exactly as it was before the suite. */
@@ -200,7 +228,7 @@ const { credentials } = await import("./authority.js");
 const { hasCredentialsForProvider } = await import("../../providers/routing-rules.js");
 
 // Sanity: the oracle must be exported for the equivalence gate.
-test("hasCredentialsForProvider is exported from routing-rules", () => {
+test("hasCredentialsForProvider is exported from routing-rules", async () => {
   expect(typeof hasCredentialsForProvider).toBe("function");
 });
 
@@ -237,6 +265,14 @@ beforeEach(() => {
     delete process.env[v];
   }
   resetState();
+
+  // CRITICAL cross-file isolation: the `credentials` authority is a process
+  // singleton whose ApiKeyCredentialProvider MEMOIZES each provider's resolved
+  // key (cachedKey). Another test file that resolved a REAL key (e.g. via op://)
+  // would leave it memoized, so our "no creds → false" cases would see the
+  // stale real key and wrongly report available. invalidate() drops every
+  // provider's memo so each test re-resolves against THIS test's env/config.
+  credentials.invalidate();
 
   // Default every test to "no local providers enabled" in the REAL config, so the
   // local path's truth is deterministic and independent of the user's real config
@@ -282,151 +318,154 @@ function seedConfigKey(envVar: string, value: string): void {
  * current state. `expected` documents the intended truth for readability and is
  * also asserted, so a regression in EITHER side is caught.
  */
-function assertEquivalent(name: string, expected: boolean): void {
-  const fromAuthority = credentials.isAuthenticated(name);
-  const fromOracle = hasCredentialsForProvider(name);
-  expect(
-    fromAuthority,
-    `authority.isAuthenticated(${name}) should equal oracle (${fromOracle})`
-  ).toBe(fromOracle);
-  expect(fromAuthority, `authority.isAuthenticated(${name}) expected ${expected}`).toBe(expected);
+async function assertEquivalent(name: string, expected: boolean): Promise<void> {
+  // Both the authority readiness oracle and the routing oracle are now ASYNC
+  // (they resolve env → config → oauth → op://). The equivalence contract is the
+  // same: authority.isAvailable() must equal hasCredentialsForProvider() and the
+  // documented expected truth, for every non-op credential state.
+  const fromAuthority = await credentials.isAvailable(name);
+  const fromOracle = await hasCredentialsForProvider(name);
+  expect(fromAuthority, `authority.isAvailable(${name}) should equal oracle (${fromOracle})`).toBe(
+    fromOracle
+  );
+  expect(fromAuthority, `authority.isAvailable(${name}) expected ${expected}`).toBe(expected);
 }
 
 // ── The matrix ────────────────────────────────────────────────────────────────
 
-describe("credential equivalence: openrouter (plain key)", () => {
-  test("no creds → false", () => assertEquivalent("openrouter", false));
-  test("primary env key → true", () => {
+describe("credential equivalence: openrouter (plain key)", async () => {
+  test("no creds → false", async () => assertEquivalent("openrouter", false));
+  test("primary env key → true", async () => {
     process.env.OPENROUTER_API_KEY = "sk-or-123";
-    assertEquivalent("openrouter", true);
+    await assertEquivalent("openrouter", true);
   });
-  test("config key → true", () => {
+  test("config key → true", async () => {
     seedConfigKey("OPENROUTER_API_KEY", "sk-or-cfg");
-    assertEquivalent("openrouter", true);
+    await assertEquivalent("openrouter", true);
   });
 });
 
-describe("credential equivalence: openai (plain key)", () => {
-  test("no creds → false", () => assertEquivalent("openai", false));
-  test("primary env key → true", () => {
+describe("credential equivalence: openai (plain key)", async () => {
+  test("no creds → false", async () => assertEquivalent("openai", false));
+  test("primary env key → true", async () => {
     process.env.OPENAI_API_KEY = "sk-oai-123";
-    assertEquivalent("openai", true);
+    await assertEquivalent("openai", true);
   });
-  test("config key → true", () => {
+  test("config key → true", async () => {
     seedConfigKey("OPENAI_API_KEY", "sk-oai-cfg");
-    assertEquivalent("openai", true);
+    await assertEquivalent("openai", true);
   });
 });
 
-describe("credential equivalence: openai-codex (OAuth-OR-CODEX-key, OPENAI_API_KEY alias excluded)", () => {
-  test("no creds → false", () => assertEquivalent("openai-codex", false));
+describe("credential equivalence: openai-codex (OAuth-OR-CODEX-key, OPENAI_API_KEY alias excluded)", async () => {
+  test("no creds → false", async () => assertEquivalent("openai-codex", false));
 
-  test("OPENAI_CODEX_API_KEY env → true", () => {
+  test("OPENAI_CODEX_API_KEY env → true", async () => {
     process.env.OPENAI_CODEX_API_KEY = "sk-codex-123";
-    assertEquivalent("openai-codex", true);
+    await assertEquivalent("openai-codex", true);
   });
 
-  test("config OPENAI_CODEX_API_KEY → true", () => {
+  test("config OPENAI_CODEX_API_KEY → true", async () => {
     seedConfigKey("OPENAI_CODEX_API_KEY", "sk-codex-cfg");
-    assertEquivalent("openai-codex", true);
+    await assertEquivalent("openai-codex", true);
   });
 
   // The OPENAI_API_KEY alias must NOT authenticate codex (it's the proxy's
   // header key for an active codex sub, not a signal the user HAS the sub).
-  test("OPENAI_API_KEY alias alone → false (excluded)", () => {
+  test("OPENAI_API_KEY alias alone → false (excluded)", async () => {
     process.env.OPENAI_API_KEY = "sk-oai-not-codex";
-    assertEquivalent("openai-codex", false);
+    await assertEquivalent("openai-codex", false);
   });
 
   // OAuth credentials present (codex path): both sides must see it as authed.
   // Oracle reads hasOAuthCredentials("openai-codex"); the new authority reads the
   // CodexOAuth singleton's hasCredentials(). We drive both from the same intent.
-  test("codex oauth credentials present → true", () => {
+  test("codex oauth credentials present → true", async () => {
     state.oauthAuthed.add("openai-codex"); // oracle's hasOAuthCredentials branch
     state.codexHasCreds = true; // new authority's CodexOAuth.hasCredentials path
-    assertEquivalent("openai-codex", true);
+    await assertEquivalent("openai-codex", true);
   });
 });
 
-describe("credential equivalence: gemini-codeassist (oauth-only)", () => {
-  test("no creds → false", () => assertEquivalent("gemini-codeassist", false));
-  test("oauth credentials present → true", () => {
+describe("credential equivalence: gemini-codeassist (oauth-only)", async () => {
+  test("no creds → false", async () => assertEquivalent("gemini-codeassist", false));
+  test("oauth credentials present → true", async () => {
     state.oauthAuthed.add("gemini-codeassist");
-    assertEquivalent("gemini-codeassist", true);
+    await assertEquivalent("gemini-codeassist", true);
   });
   // google is an alias of the gemini-codeassist credential in the authority, and
   // the oracle's hasOAuthCredentials("google") also reads gemini-oauth.json.
-  test("google alias, oauth present → true", () => {
+  test("google alias, oauth present → true", async () => {
     state.oauthAuthed.add("google");
     // For the authority, "google" routes to the gemini-codeassist provider,
     // whose isAuthenticated reads hasOAuthCredentials("gemini-codeassist").
     state.oauthAuthed.add("gemini-codeassist");
-    assertEquivalent("google", true);
+    await assertEquivalent("google", true);
   });
 });
 
-describe("credential equivalence: kimi (oauth + api-key fallback)", () => {
-  test("no creds → false", () => assertEquivalent("kimi", false));
-  test("oauth present → true", () => {
+describe("credential equivalence: kimi (oauth + api-key fallback)", async () => {
+  test("no creds → false", async () => assertEquivalent("kimi", false));
+  test("oauth present → true", async () => {
     state.oauthAuthed.add("kimi");
-    assertEquivalent("kimi", true);
+    await assertEquivalent("kimi", true);
   });
-  test("MOONSHOT_API_KEY env → true", () => {
+  test("MOONSHOT_API_KEY env → true", async () => {
     process.env.MOONSHOT_API_KEY = "sk-moon-123";
-    assertEquivalent("kimi", true);
+    await assertEquivalent("kimi", true);
   });
-  test("KIMI_API_KEY alias env → true", () => {
+  test("KIMI_API_KEY alias env → true", async () => {
     process.env.KIMI_API_KEY = "sk-kimi-alias";
-    assertEquivalent("kimi", true);
+    await assertEquivalent("kimi", true);
   });
-  test("config MOONSHOT_API_KEY → true", () => {
+  test("config MOONSHOT_API_KEY → true", async () => {
     seedConfigKey("MOONSHOT_API_KEY", "sk-moon-cfg");
-    assertEquivalent("kimi", true);
+    await assertEquivalent("kimi", true);
   });
 });
 
-describe("credential equivalence: opencode-zen (publicKeyFallback)", () => {
+describe("credential equivalence: opencode-zen (publicKeyFallback)", async () => {
   // The CRITICAL Phase-B gap: a publicKeyFallback provider is ALWAYS available
   // (isProviderAvailable returns true), even with no env/config key. The new
   // ApiKeyCredentialProvider must replicate this.
-  test("no creds, publicKeyFallback → true", () => assertEquivalent("opencode-zen", true));
-  test("with env key → true", () => {
+  test("no creds, publicKeyFallback → true", async () => assertEquivalent("opencode-zen", true));
+  test("with env key → true", async () => {
     process.env.OPENCODE_API_KEY = "sk-zen-123";
-    assertEquivalent("opencode-zen", true);
+    await assertEquivalent("opencode-zen", true);
   });
 });
 
-describe("credential equivalence: native-anthropic (dual-env)", () => {
-  test("no creds → false", () => assertEquivalent("native-anthropic", false));
-  test("ANTHROPIC_API_KEY → true", () => {
+describe("credential equivalence: native-anthropic (dual-env)", async () => {
+  test("no creds → false", async () => assertEquivalent("native-anthropic", false));
+  test("ANTHROPIC_API_KEY → true", async () => {
     process.env.ANTHROPIC_API_KEY = "sk-ant-123";
-    assertEquivalent("native-anthropic", true);
+    await assertEquivalent("native-anthropic", true);
   });
-  test("ANTHROPIC_AUTH_TOKEN → true", () => {
+  test("ANTHROPIC_AUTH_TOKEN → true", async () => {
     process.env.ANTHROPIC_AUTH_TOKEN = "tok-ant-456";
-    assertEquivalent("native-anthropic", true);
+    await assertEquivalent("native-anthropic", true);
   });
 });
 
-describe("credential equivalence: ollama (local)", () => {
+describe("credential equivalence: ollama (local)", async () => {
   // The local path's truth flows through the REAL global config file (see the
   // "Local providers" note above): beforeEach already seeded an empty
   // localProviders[]; tests that enable ollama re-seed via seedLocalProviders().
-  test("not enabled → false", () => assertEquivalent("ollama", false));
-  test("local-enabled → true", () => {
+  test("not enabled → false", async () => assertEquivalent("ollama", false));
+  test("local-enabled → true", async () => {
     state.localEnabled.add("ollama");
     seedLocalProviders(); // write localProviders:["ollama"] into the real config
-    assertEquivalent("ollama", true);
+    await assertEquivalent("ollama", true);
   });
   // An env key alone must NOT make a local provider routable — only the
   // explicit localProviders opt-in does.
-  test("env key but not enabled → false", () => {
+  test("env key but not enabled → false", async () => {
     process.env.OLLAMA_API_KEY = "ignored";
-    assertEquivalent("ollama", false);
+    await assertEquivalent("ollama", false);
   });
 });
 
-describe("credential equivalence: qwen (empty apiKeyEnvVar, no special affordance)", () => {
+describe("credential equivalence: qwen (empty apiKeyEnvVar, no special affordance)", async () => {
   // qwen has apiKeyEnvVar:"" and is NOT local/native/codex. buildDefault SKIPS it
   // (empty envVar) → unregistered → authority.isAuthenticated false. The oracle's
   // extra `!apiKeyEnvVar && !publicKeyFallback && !isLocal → false` guard makes it
@@ -434,21 +473,21 @@ describe("credential equivalence: qwen (empty apiKeyEnvVar, no special affordanc
   // the routing oracle DIVERGES from the bare isProviderAvailable(def), which would
   // return true for an empty key — see the report; that's why we migrate routing to
   // the authority, not isProviderAvailable.)
-  test("no creds → false (both)", () => assertEquivalent("qwen", false));
-  test("unrelated env keys present → still false", () => {
+  test("no creds → false (both)", async () => assertEquivalent("qwen", false));
+  test("unrelated env keys present → still false", async () => {
     process.env.OPENAI_API_KEY = "sk-irrelevant";
-    assertEquivalent("qwen", false);
+    await assertEquivalent("qwen", false);
   });
 });
 
-describe("credential equivalence: glm (alias key)", () => {
-  test("no creds → false", () => assertEquivalent("glm", false));
-  test("primary ZHIPU_API_KEY → true", () => {
+describe("credential equivalence: glm (alias key)", async () => {
+  test("no creds → false", async () => assertEquivalent("glm", false));
+  test("primary ZHIPU_API_KEY → true", async () => {
     process.env.ZHIPU_API_KEY = "sk-zhipu";
-    assertEquivalent("glm", true);
+    await assertEquivalent("glm", true);
   });
-  test("GLM_API_KEY alias → true", () => {
+  test("GLM_API_KEY alias → true", async () => {
     process.env.GLM_API_KEY = "sk-glm-alias";
-    assertEquivalent("glm", true);
+    await assertEquivalent("glm", true);
   });
 });

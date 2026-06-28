@@ -39,6 +39,7 @@ import {
 } from "./profile-config.js";
 import { buildLegacyHint, resolveDefaultProvider } from "./default-provider.js";
 import { parseModelSpec } from "./providers/model-parser.js";
+import { fetchOllamaModels } from "./providers/ollama-discovery.js";
 import { type FallbackRoute } from "./providers/auto-route.js";
 import {
   loadRoutingRules,
@@ -554,6 +555,15 @@ export async function parseArgs(args: string[]): Promise<ClaudishConfig> {
       //   --system-prompt "text"     → ['--system-prompt', 'text']
       //   --allowedTools Bash,Edit   → ['--allowedTools', 'Bash,Edit']
       config.claudeArgs.push(arg);
+      // A passthrough -p/--print flag means the user wants single-shot/print
+      // mode. Mark it so the interactive default below doesn't flip
+      // interactive=true and launch the picker — which would then forward a
+      // bare `-p` (no prompt) to the child `claude` and crash with
+      // "Input must be provided either through stdin or as a prompt argument
+      // when using --print".
+      if (arg === "-p" || arg === "--print") {
+        config._hasPrintFlag = true;
+      }
       if (i + 1 < args.length && !args[i + 1].startsWith("-")) {
         config.claudeArgs.push(args[++i]);
       }
@@ -574,7 +584,7 @@ export async function parseArgs(args: string[]): Promise<ClaudishConfig> {
   // A "prompt" is a positional arg that appears outside of flag-value pairs.
   // Flags like "--session-id uuid --dangerously-skip-permissions" have no prompt,
   // so they should be interactive too.
-  if (!config._hasPositionalPrompt && !config.stdin) {
+  if (!config._hasPositionalPrompt && !config.stdin && !config._hasPrintFlag) {
     config.interactive = true;
   }
 
@@ -668,73 +678,6 @@ export async function parseArgs(args: string[]): Promise<ClaudishConfig> {
   return config as ClaudishConfig;
 }
 
-/**
- * Fetch locally available Ollama models
- * Returns empty array if Ollama is not running
- */
-async function fetchOllamaModels(): Promise<any[]> {
-  const ollamaHost =
-    process.env.OLLAMA_HOST || process.env.OLLAMA_BASE_URL || "http://localhost:11434";
-
-  try {
-    const response = await fetch(`${ollamaHost}/api/tags`, {
-      signal: AbortSignal.timeout(3000), // 3 second timeout
-    });
-
-    if (!response.ok) return [];
-
-    const data = (await response.json()) as { models?: any[] };
-    const models = data.models || [];
-
-    // Fetch capabilities for each model in parallel
-    const modelsWithCapabilities = await Promise.all(
-      models.map(async (m: any) => {
-        let capabilities: string[] = [];
-        try {
-          const showResponse = await fetch(`${ollamaHost}/api/show`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ name: m.name }),
-            signal: AbortSignal.timeout(2000),
-          });
-          if (showResponse.ok) {
-            const showData = (await showResponse.json()) as { capabilities?: string[] };
-            capabilities = showData.capabilities || [];
-          }
-        } catch {
-          // Ignore capability fetch errors
-        }
-
-        const supportsTools = capabilities.includes("tools");
-        const isEmbeddingModel =
-          capabilities.includes("embedding") || m.name.toLowerCase().includes("embed");
-        const sizeInfo = m.details?.parameter_size || "unknown size";
-        const toolsIndicator = supportsTools ? "✓ tools" : "✗ no tools";
-
-        return {
-          id: `ollama/${m.name}`,
-          name: m.name,
-          description: `Local Ollama model (${sizeInfo}, ${toolsIndicator})`,
-          provider: "ollama",
-          context_length: null, // Ollama doesn't expose this in /api/tags
-          pricing: { prompt: "0", completion: "0" }, // Free (local)
-          isLocal: true,
-          supportsTools,
-          isEmbeddingModel,
-          capabilities,
-          details: m.details,
-          size: m.size,
-        };
-      })
-    );
-
-    // Filter out embedding models - they can't be used for chat/completion
-    return modelsWithCapabilities.filter((m: any) => !m.isEmbeddingModel);
-  } catch (e) {
-    // Ollama not running or not reachable
-    return [];
-  }
-}
 
 /** Format a ModelDoc numeric pricing block for display. */
 function formatModelDocPricing(pricing: ModelDoc["pricing"]): string {
@@ -1850,7 +1793,7 @@ function printHelp(): void {
 
   console.log(`
 ${bold("claudish")} ${dim("·")} Run Claude Code with any AI model
-${dim("OpenRouter · Gemini · OpenAI · xAI · MiniMax · Kimi · GLM · Z.AI · Poe · LiteLLM · Local")}
+${dim("OpenRouter · Gemini · OpenAI · xAI · MiniMax · Kimi · GLM · Z.AI · Sakana · Poe · LiteLLM · Local")}
 
 ${h("USAGE")}
   ${green("claudish")}                                ${dim("# Interactive mode (default, model selector)")}
@@ -1887,6 +1830,8 @@ ${h("MODEL ROUTING")}
     ${magenta("poe")}            ${dim("->")} Poe                 ${dim("poe@GPT-4o")}
     ${magenta("litellm, ll")}    ${dim("->")} LiteLLM             ${dim("ll@gpt-4o (needs LITELLM_BASE_URL)")}
     ${magenta("ds")}             ${dim("->")} DeepSeek            ${dim("ds@deepseek-chat")}
+    ${magenta("sakana, fugu")}   ${dim("->")} Sakana Fugu         ${dim("fugu@fugu-ultra")}
+    ${magenta("sc")}             ${dim("->")} Sakana Subscription ${dim("sc@fugu-ultra")}
     ${magenta("ollama")}         ${dim("->")} Ollama (local)      ${dim("ollama@llama3.2")}
     ${magenta("lms, lmstudio")}  ${dim("->")} LM Studio (local)   ${dim("lms@qwen")}
     ${magenta("vllm")}           ${dim("->")} vLLM (local)        ${dim("vllm@model")}
@@ -1900,6 +1845,7 @@ ${h("MODEL ROUTING")}
     ${yellow("minimax/*, abab-*")}       ${dim("->")} MiniMax API
     ${yellow("moonshot/*, kimi-*")}      ${dim("->")} Kimi API
     ${yellow("zhipu/*, glm-*")}          ${dim("->")} GLM API
+    ${yellow("sakana/*, fugu-*")}        ${dim("->")} Sakana Fugu
     ${yellow("poe:*")}                   ${dim("->")} Poe
     ${yellow("anthropic/*, claude-*")}   ${dim("->")} Native Anthropic
     ${yellow("(unknown vendor/)")}       ${dim("->")} Error (use openrouter@vendor/model)
@@ -2044,6 +1990,9 @@ ${h("ENVIRONMENT VARIABLES")}
   ${blue("ZHIPU_API_KEY")}                   GLM / Zhipu ${dim("(glm@, zhipu@; alias GLM_API_KEY)")}
   ${blue("GLM_CODING_API_KEY")}              GLM Coding Plan ${dim("(gc@; alias ZAI_CODING_API_KEY)")}
   ${blue("ZAI_API_KEY")}                     Z.AI ${dim("(z-ai@, zai@)")}
+  ${blue("DEEPSEEK_API_KEY")}                DeepSeek ${dim("(ds@)")}
+  ${blue("SAKANA_API_KEY")}                  Sakana Fugu ${dim("(sakana@, fugu@)")}
+  ${blue("SAKANA_CODING_API_KEY")}           Sakana Fugu Subscription ${dim("(sc@; alias SAKANA_API_KEY)")}
   ${blue("OLLAMA_API_KEY")}                  OllamaCloud ${dim("(oc@, llama@)")}
   ${blue("OPENCODE_API_KEY")}                OpenCode Zen ${dim("(zen@; optional - free models work without it)")}
   ${blue("POE_API_KEY")}                     Poe ${dim("(poe@)")}
@@ -2060,6 +2009,7 @@ ${h("ENVIRONMENT VARIABLES")}
   ${blue("MINIMAX_BASE_URL")}                Custom MiniMax endpoint
   ${blue("MOONSHOT_BASE_URL")}               Custom Kimi / Moonshot endpoint ${dim("(alias KIMI_BASE_URL)")}
   ${blue("ZHIPU_BASE_URL")}                  Custom GLM / Zhipu endpoint ${dim("(alias GLM_BASE_URL)")}
+  ${blue("SAKANA_BASE_URL")}                 Custom Sakana endpoint ${dim("(default: https://api.sakana.ai)")}
   ${blue("LITELLM_BASE_URL")}                LiteLLM gateway base URL ${dim("(required for ll@)")}
   ${blue("OLLAMACLOUD_BASE_URL")}            OllamaCloud ${dim("(default: https://ollama.com)")}
   ${blue("OPENCODE_BASE_URL")}               OpenCode Zen ${dim("(default: https://opencode.ai/zen)")}

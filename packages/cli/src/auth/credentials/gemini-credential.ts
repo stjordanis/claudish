@@ -34,7 +34,7 @@ function createActivityRequestId(): string {
 export class GeminiCodeAssistCredentialProvider implements CredentialProvider {
   readonly catalogName = "gemini-codeassist";
 
-  isAuthenticated(): boolean {
+  async isAvailable(): Promise<boolean> {
     return hasOAuthCredentials("gemini-codeassist");
   }
 

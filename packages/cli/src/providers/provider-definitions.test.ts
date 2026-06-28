@@ -17,11 +17,8 @@ import {
   isLocalTransport,
   isDirectApiProvider,
   toRemoteProvider,
-  getAllProviders,
   getShortestPrefix,
   getApiKeyEnvVars,
-  isProviderAvailable,
-  type ProviderDefinition,
 } from "./provider-definitions.js";
 
 // ---------------------------------------------------------------------------
@@ -402,59 +399,9 @@ describe("getApiKeyEnvVars", () => {
 });
 
 // ---------------------------------------------------------------------------
-// isProviderAvailable
-// ---------------------------------------------------------------------------
-
-describe("isProviderAvailable", () => {
-  test("local providers are always available", () => {
-    const ollama = getProviderByName("ollama")!;
-    expect(isProviderAvailable(ollama)).toBe(true);
-
-    const lmstudio = getProviderByName("lmstudio")!;
-    expect(isProviderAvailable(lmstudio)).toBe(true);
-  });
-
-  test("providers with publicKeyFallback are always available", () => {
-    const zen = getProviderByName("opencode-zen")!;
-    expect(isProviderAvailable(zen)).toBe(true);
-  });
-
-  test("provider with primary API key set is available", () => {
-    const prev = process.env.GEMINI_API_KEY;
-    process.env.GEMINI_API_KEY = "test-key";
-    try {
-      const google = getProviderByName("google")!;
-      expect(isProviderAvailable(google)).toBe(true);
-    } finally {
-      if (prev === undefined) delete process.env.GEMINI_API_KEY;
-      else process.env.GEMINI_API_KEY = prev;
-    }
-  });
-
-  test("provider with alias API key set is available", () => {
-    const prevPrimary = process.env.ZHIPU_API_KEY;
-    const prevAlias = process.env.GLM_API_KEY;
-    delete process.env.ZHIPU_API_KEY;
-    process.env.GLM_API_KEY = "test-alias-key";
-    try {
-      const glm = getProviderByName("glm")!;
-      expect(isProviderAvailable(glm)).toBe(true);
-    } finally {
-      if (prevPrimary === undefined) delete process.env.ZHIPU_API_KEY;
-      else process.env.ZHIPU_API_KEY = prevPrimary;
-      if (prevAlias === undefined) delete process.env.GLM_API_KEY;
-      else process.env.GLM_API_KEY = prevAlias;
-    }
-  });
-
-  test("provider without API key is unavailable", () => {
-    const prev = process.env.OLLAMA_API_KEY;
-    delete process.env.OLLAMA_API_KEY;
-    try {
-      const oc = getProviderByName("ollamacloud")!;
-      expect(isProviderAvailable(oc)).toBe(false);
-    } finally {
-      if (prev !== undefined) process.env.OLLAMA_API_KEY = prev;
-    }
-  });
-});
+// isProviderAvailable / isProviderAvailableByName were DELETED in the
+// async-credential-layer refactor — provider readiness now lives in the
+// credential authority (auth/credentials/authority.ts → isAvailable). The
+// readiness cases formerly tested here (local always-available, publicKeyFallback,
+// primary key, alias key, no-key → unavailable) are covered by the authority's
+// equivalence matrix in auth/credentials/equivalence.test.ts.

@@ -42,7 +42,7 @@ export class CodexOAuthHalf implements CredentialProvider {
   readonly catalogName = "openai-codex";
   private oauth = CodexOAuth.getInstance();
 
-  isAuthenticated(): boolean {
+  async isAvailable(): Promise<boolean> {
     return this.oauth.hasCredentials();
   }
 

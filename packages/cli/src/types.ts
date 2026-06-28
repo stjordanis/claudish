@@ -46,6 +46,7 @@ export interface ClaudishConfig {
   resolvedDefaultProvider?: import("./default-provider.js").ResolvedDefaultProvider;
   claudeArgs: string[];
   _hasPositionalPrompt?: boolean; // Internal: true when a positional prompt arg was found (not a flag value)
+  _hasPrintFlag?: boolean; // Internal: true when a passthrough -p/--print flag was found (implies single-shot, not interactive)
 
   // Model Mapping
   modelOpus?: string;

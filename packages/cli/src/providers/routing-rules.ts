@@ -208,16 +208,20 @@ export type RoutePlan =
  * Equivalence with the previous inline logic is pinned by
  * auth/credentials/equivalence.test.ts.
  */
-export function hasCredentialsForProvider(provider: string): boolean {
-  return credentials.isAuthenticated(provider);
+export async function hasCredentialsForProvider(provider: string): Promise<boolean> {
+  return credentials.isAvailable(provider);
 }
 
 /**
  * Path 1: an explicit "provider@model" spec. Probe ONLY that provider's
  * credentials; never fall back silently.
  */
-function routeExplicit(modelSpec: string, model: string, provider: string): RoutePlan {
-  if (!hasCredentialsForProvider(provider)) {
+async function routeExplicit(
+  modelSpec: string,
+  model: string,
+  provider: string
+): Promise<RoutePlan> {
+  if (!(await hasCredentialsForProvider(provider))) {
     return {
       kind: "no-route",
       reason: `No credentials configured for "${provider}".`,
@@ -244,12 +248,12 @@ function routeExplicit(modelSpec: string, model: string, provider: string): Rout
  * has no credentialed providers. Deduped: if the chain already lists the
  * default provider, no second copy is added.
  */
-function routeBare(
+async function routeBare(
   model: string,
   nativeProvider: string,
   rules: RoutingRules,
   defaultProvider?: string
-): RoutePlan {
+): Promise<RoutePlan> {
   const matched = matchRoutingRule(model, rules) ?? [];
   const entries = [...matched];
 
@@ -277,13 +281,19 @@ function routeBare(
   const credentialed: Route[] = [];
   const skipped: string[] = [];
 
-  for (const candidate of candidates) {
-    if (hasCredentialsForProvider(candidate.provider)) {
+  // Resolve each candidate's credentials concurrently (each call funnels through
+  // the SDK serialization queue internally), but keep the original chain ORDER
+  // when partitioning into credentialed / skipped.
+  const checks = await Promise.all(
+    candidates.map((candidate) => hasCredentialsForProvider(candidate.provider))
+  );
+  candidates.forEach((candidate, i) => {
+    if (checks[i]) {
       credentialed.push(candidate);
     } else {
       skipped.push(candidate.provider);
     }
-  }
+  });
 
   if (credentialed.length === 0) {
     return {
@@ -317,11 +327,11 @@ function routeBare(
  * and `loadConfig()`) unless overrides are supplied. Tests should pass overrides
  * to avoid disk lookups.
  */
-export function route(
+export async function route(
   modelSpec: string,
   rulesOverride?: RoutingRules,
   defaultProviderOverride?: string
-): RoutePlan {
+): Promise<RoutePlan> {
   const parsed = parseModelSpec(modelSpec);
 
   if (parsed.isExplicitProvider) {
@@ -341,3 +351,5 @@ export function route(
         : loadConfig().defaultProvider;
   return routeBare(parsed.model, parsed.provider, rules, defaultProvider);
 }
+
+// route() is now async; routeBare returns a Promise which is awaited by the caller.

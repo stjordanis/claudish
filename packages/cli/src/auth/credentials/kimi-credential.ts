@@ -30,7 +30,7 @@ export class KimiOAuthHalf implements CredentialProvider {
   readonly catalogName = "kimi";
   private oauth = KimiOAuth.getInstance();
 
-  isAuthenticated(): boolean {
+  async isAvailable(): Promise<boolean> {
     return hasOAuthCredentials("kimi");
   }
 

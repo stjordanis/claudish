@@ -72,6 +72,22 @@ export interface AggregatorEntry {
   provider: string;
   externalId: string;
   confidence: ConfidenceTier;
+  /**
+   * True per-aggregator price for this (provider, externalId), as served by the
+   * `?catalog=slim` endpoint. Present when the catalog knows this vendor's rate,
+   * omitted otherwise (so consumers show N/A rather than a wrong price). This is
+   * the gateway's actual rate, NOT the owner list price — an aggregator like
+   * OpenRouter/OpenCode Zen can charge differently from the model owner.
+   */
+  pricing?: {
+    input?: number;
+    output?: number;
+    cachedRead?: number;
+    cachedWrite?: number;
+    imageInput?: number;
+    audioInput?: number;
+    batchDiscountPct?: number;
+  };
 }
 
 /**

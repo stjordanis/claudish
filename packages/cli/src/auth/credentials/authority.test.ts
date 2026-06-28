@@ -1,8 +1,37 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { ApiKeyCredentialProvider } from "./api-key-credential.js";
 import { CredentialAuthority } from "./authority.js";
 import { CompositeCredentialProvider } from "./composite-credential.js";
+import { __resetSniffForTests } from "./op-source.js";
 import type { CredentialProvider, RequestAuth, RequestAuthContext } from "./types.js";
+
+// ── Hermetic op-source gate (mock-free) ─────────────────────────────────────
+//
+// The credential layer's last resolution step is 1Password (op://). On a machine
+// that actually HAS an op source in config, the real SDK would be consulted
+// whenever a provider's env/config/oauth all miss — flaky and non-hermetic (the
+// SDK can be denied / time out).
+//
+// We do NOT mock op-source.js: Bun's mock.module is process-global, so a stub
+// here bleeds into sibling files that test the REAL op-source (op-source.test.ts)
+// when both run in one `bun test` process. Instead we use the production escape
+// hatch CLAUDISH_DISABLE_OP=1, which makes hasOpSources() return false WITHOUT
+// touching the SDK. With it set, ApiKeyCredentialProvider.isAvailable()
+// short-circuits before the op path — exactly the env/config-only resolution the
+// tests need, hermetically, with no module mock to leak.
+let savedDisableOp: string | undefined;
+
+beforeAll(() => {
+  savedDisableOp = process.env.CLAUDISH_DISABLE_OP;
+  process.env.CLAUDISH_DISABLE_OP = "1";
+  __resetSniffForTests(); // hasOpSources() memoizes — re-sniff with the flag on.
+});
+
+afterAll(() => {
+  if (savedDisableOp === undefined) delete process.env.CLAUDISH_DISABLE_OP;
+  else process.env.CLAUDISH_DISABLE_OP = savedDisableOp;
+  __resetSniffForTests(); // drop the disabled-state sniff for later files.
+});
 
 // ── Test helpers ────────────────────────────────────────────────────────────
 
@@ -15,6 +44,7 @@ class FakeProvider implements CredentialProvider {
   loginCalls = 0;
   logoutCalls = 0;
   getRequestAuthCalls = 0;
+  invalidateCalls = 0;
 
   constructor(
     catalogName: string,
@@ -26,7 +56,7 @@ class FakeProvider implements CredentialProvider {
     this.throwError = opts.throwError;
   }
 
-  isAuthenticated(): boolean {
+  async isAvailable(): Promise<boolean> {
     return this.authed;
   }
 
@@ -34,6 +64,10 @@ class FakeProvider implements CredentialProvider {
     this.getRequestAuthCalls++;
     if (this.throwError) throw this.throwError;
     return this.artifact;
+  }
+
+  invalidate(): void {
+    this.invalidateCalls++;
   }
 
   async login(): Promise<void> {
@@ -46,6 +80,14 @@ class FakeProvider implements CredentialProvider {
 }
 
 const CTX: RequestAuthContext = { model: "test-model" };
+
+/** Extract the resolved API key from a RequestAuth, for either auth scheme. */
+function keyFromAuth(auth: RequestAuth): string | undefined {
+  if (auth.headers.Authorization) {
+    return auth.headers.Authorization.replace(/^Bearer /, "");
+  }
+  return auth.headers["x-api-key"];
+}
 
 // ── ApiKeyCredentialProvider ────────────────────────────────────────────────
 
@@ -69,30 +111,33 @@ describe("ApiKeyCredentialProvider", () => {
     else process.env[ALIAS] = savedAlias;
   });
 
-  test("isAuthenticated() is true when the env var is set", () => {
+  test("isAvailable() is true when the env var is set", async () => {
     const provider = new ApiKeyCredentialProvider({ catalogName: "fake", envVar: ENV_VAR });
-    expect(provider.isAuthenticated()).toBe(false);
+    expect(await provider.isAvailable()).toBe(false);
     process.env[ENV_VAR] = "sk-test-123";
-    expect(provider.isAuthenticated()).toBe(true);
+    provider.invalidate();
+    expect(await provider.isAvailable()).toBe(true);
   });
 
-  test("isAuthenticated() is true when an alias env var is set", () => {
+  test("isAvailable() is true when an alias env var is set", async () => {
     const provider = new ApiKeyCredentialProvider({
       catalogName: "fake",
       envVar: ENV_VAR,
       aliases: [ALIAS],
     });
-    expect(provider.isAuthenticated()).toBe(false);
+    expect(await provider.isAvailable()).toBe(false);
     process.env[ALIAS] = "sk-alias-456";
-    expect(provider.isAuthenticated()).toBe(true);
+    provider.invalidate();
+    expect(await provider.isAvailable()).toBe(true);
   });
 
   // Regression: when ONLY an alias env var is set, the resolved key must be the
-  // alias's VALUE, not the alias NAME. Previously resolveSync used
+  // alias's VALUE, not the alias NAME. Previously resolveFromEnvConfig used
   // `aliases.find(a => process.env[a])`, which returns the matching element (the
-  // alias NAME string) — so apiKeyValue()/getRequestAuth sent the literal env-var
-  // name as the API key → guaranteed 401. Affects any provider configured via its
-  // alias (e.g. glm via GLM_API_KEY, glm-coding via ZAI_CODING_API_KEY).
+  // alias NAME string) — so getRequestAuth sent the literal env-var name as the
+  // API key → guaranteed 401. Affects any provider configured via its alias
+  // (e.g. glm via GLM_API_KEY, glm-coding via ZAI_CODING_API_KEY). The resolved
+  // key now surfaces in the Authorization header as `Bearer <value>`.
   test("resolves the alias VALUE (not the alias name) when only the alias is set", async () => {
     process.env[ALIAS] = "sk-alias-real-value-789";
     const provider = new ApiKeyCredentialProvider({
@@ -100,12 +145,13 @@ describe("ApiKeyCredentialProvider", () => {
       envVar: ENV_VAR,
       aliases: [ALIAS],
     });
-    expect(provider.apiKeyValue()).toBe("sk-alias-real-value-789");
     const auth = await provider.getRequestAuth(CTX);
     expect(auth.headers.Authorization).toBe("Bearer sk-alias-real-value-789");
+    // Specifically NOT the alias NAME — guards the resolve-name-vs-value bug.
+    expect(auth.headers.Authorization).not.toBe(`Bearer ${ALIAS}`);
   });
 
-  test("primary env var wins over an alias when both are set", () => {
+  test("primary env var wins over an alias when both are set", async () => {
     process.env[ENV_VAR] = "sk-primary-wins";
     process.env[ALIAS] = "sk-alias-loses";
     const provider = new ApiKeyCredentialProvider({
@@ -113,7 +159,8 @@ describe("ApiKeyCredentialProvider", () => {
       envVar: ENV_VAR,
       aliases: [ALIAS],
     });
-    expect(provider.apiKeyValue()).toBe("sk-primary-wins");
+    const auth = await provider.getRequestAuth(CTX);
+    expect(auth.headers.Authorization).toBe("Bearer sk-primary-wins");
   });
 
   test("getRequestAuth() returns an Authorization Bearer header (bearer scheme)", async () => {
@@ -149,7 +196,7 @@ describe("ApiKeyCredentialProvider", () => {
     expect(auth.headers.Authorization).toBe("Bearer sk-static");
   });
 
-  test("isAuthenticated() is always true when publicKeyFallback is set", () => {
+  test("isAvailable() is always true when publicKeyFallback is set", async () => {
     // No env/config key at all, but a public/free key means always-available
     // (mirrors isProviderAvailable's publicKeyFallback branch).
     const provider = new ApiKeyCredentialProvider({
@@ -157,70 +204,108 @@ describe("ApiKeyCredentialProvider", () => {
       envVar: "CLAUDISH_TEST_ZEN_KEY_UNSET",
       publicKeyFallback: true,
     });
-    expect(provider.isAuthenticated()).toBe(true);
+    expect(await provider.isAvailable()).toBe(true);
   });
 
-  test("isAuthenticated() is true when the oauthFallback file exists", () => {
-    // package.json is guaranteed to exist; we point oauthFallback's existsSync at
-    // it via a relative filename that resolves under ~/.claudish only when present.
-    // Here we assert the negative+positive via a real file presence check: a
-    // bogus oauthFallback filename must NOT authenticate.
+  test("isAvailable() is false when the oauthFallback file does not exist", async () => {
+    // A bogus oauthFallback filename (definitely absent under ~/.claudish) must
+    // NOT authenticate when there's no env/config/op key either.
     const provider = new ApiKeyCredentialProvider({
       catalogName: "fake-oauth",
       envVar: "CLAUDISH_TEST_FAKE_OAUTH_KEY_UNSET",
       oauthFallback: "claudish-test-definitely-absent-oauth.json",
     });
-    expect(provider.isAuthenticated()).toBe(false);
+    expect(await provider.isAvailable()).toBe(false);
   });
 
-  // CRITICAL laziness test: a sync isAuthenticated() check with NO env/config key
-  // and an op:// glob in config must return false WITHOUT touching the 1Password
-  // SDK. It is sync, so it literally cannot do the async SDK call — we assert it
-  // returns false and never throws.
-  test("isAuthenticated() returns false (no throw) without touching the 1Password SDK", () => {
+  // CRITICAL laziness test: isAvailable() with NO env/config key must return
+  // false WITHOUT touching the 1Password SDK. ApiKeyCredentialProvider only
+  // consults op-source when hasOpSources() is true — and CLAUDISH_DISABLE_OP=1
+  // (set in beforeAll) pins hasOpSources() to false. So the op path is
+  // STRUCTURALLY unreachable here: resolveOpKeyForEnvVars() is never called and
+  // the @1password/sdk WASM never loads. (This structural guarantee replaces the
+  // old mock-based call counter, which leaked across files.) We assert the check
+  // resolves false, never throws, and completes near-instantly (an SDK pull would
+  // take far longer than a few ms).
+  test("isAvailable() returns false (no throw) without touching the 1Password SDK", async () => {
     const opOnlyVar = "CLAUDISH_TEST_OP_ONLY_KEY_XYZ";
     const saved = process.env[opOnlyVar];
     delete process.env[opOnlyVar];
     try {
       const provider = new ApiKeyCredentialProvider({ catalogName: "fake", envVar: opOnlyVar });
       // Even if config.json contained "op://Vault/Item/FAKE_FIELD" for this var,
-      // the sync resolver cannot resolve it (no SDK), so the check is false.
+      // hasOpSources() is false (CLAUDISH_DISABLE_OP=1) → the SDK is never consulted.
       let result: boolean | undefined;
-      expect(() => {
-        result = provider.isAuthenticated();
-      }).not.toThrow();
+      let threw = false;
+      const started = performance.now();
+      try {
+        result = await provider.isAvailable();
+      } catch {
+        threw = true;
+      }
+      const elapsedMs = performance.now() - started;
+      expect(threw).toBe(false);
       expect(result).toBe(false);
+      // No SDK round-trip happened — the env/config-only path is synchronous-fast.
+      expect(elapsedMs).toBeLessThan(250);
     } finally {
       if (saved === undefined) delete process.env[opOnlyVar];
       else process.env[opOnlyVar] = saved;
     }
+  });
+
+  // invalidate() drops the memoized resolution so the next isAvailable()/
+  // getRequestAuth() re-reads env. Without it, an env change after the first
+  // resolve would be invisible (the key is cached for the process lifetime).
+  test("invalidate() re-opens resolution after the env changes", async () => {
+    process.env[ENV_VAR] = "sk-cached-first";
+    const provider = new ApiKeyCredentialProvider({ catalogName: "fake", envVar: ENV_VAR });
+    expect(await provider.isAvailable()).toBe(true);
+    // Prime the memo via a request.
+    expect((await provider.getRequestAuth(CTX)).headers.Authorization).toBe("Bearer sk-cached-first");
+
+    // Drop the key; the memoized value still reports available until invalidate().
+    delete process.env[ENV_VAR];
+    expect(await provider.isAvailable()).toBe(true);
+
+    provider.invalidate();
+    expect(await provider.isAvailable()).toBe(false);
   });
 });
 
 // ── CompositeCredentialProvider ─────────────────────────────────────────────
 
 describe("CompositeCredentialProvider", () => {
-  test("isAuthenticated() is true when either half is authed", () => {
+  test("isAvailable() is true when either half is authed", async () => {
     const neither = new CompositeCredentialProvider(
       "c",
       new FakeProvider("p", { authed: false }),
       new FakeProvider("f", { authed: false })
     );
-    expect(neither.isAuthenticated()).toBe(false);
+    expect(await neither.isAvailable()).toBe(false);
 
     const primaryOnly = new CompositeCredentialProvider(
       "c",
       new FakeProvider("p", { authed: true }),
       new FakeProvider("f", { authed: false })
     );
-    expect(primaryOnly.isAuthenticated()).toBe(true);
+    expect(await primaryOnly.isAvailable()).toBe(true);
 
     const fallbackOnly = new CompositeCredentialProvider(
       "c",
       new FakeProvider("p", { authed: false }),
       new FakeProvider("f", { authed: true })
     );
-    expect(fallbackOnly.isAuthenticated()).toBe(true);
+    expect(await fallbackOnly.isAvailable()).toBe(true);
+  });
+
+  test("invalidate() delegates to both halves", () => {
+    const primary = new FakeProvider("p");
+    const fallback = new FakeProvider("f");
+    const composite = new CompositeCredentialProvider("c", primary, fallback);
+    composite.invalidate();
+    expect(primary.invalidateCalls).toBe(1);
+    expect(fallback.invalidateCalls).toBe(1);
   });
 
   test("primary authed → returns the primary artifact", async () => {
@@ -300,36 +385,36 @@ describe("CompositeCredentialProvider", () => {
 // ── CredentialAuthority registry/dispatch ───────────────────────────────────
 
 describe("CredentialAuthority", () => {
-  test("register + isAuthenticated dispatch by catalogName", () => {
+  test("register + isAvailable dispatch by catalogName", async () => {
     const authority = new CredentialAuthority();
     authority.register(new FakeProvider("alpha", { authed: true }));
     authority.register(new FakeProvider("beta", { authed: false }));
-    expect(authority.isAuthenticated("alpha")).toBe(true);
-    expect(authority.isAuthenticated("beta")).toBe(false);
+    expect(await authority.isAvailable("alpha")).toBe(true);
+    expect(await authority.isAvailable("beta")).toBe(false);
   });
 
-  test("aliases resolve to the same instance", () => {
+  test("aliases resolve to the same instance", async () => {
     const authority = new CredentialAuthority();
     const instance = new FakeProvider("gemini-codeassist", { authed: true });
     authority.register(instance, ["gemini-codeassist", "google"]);
     expect(authority.get("gemini-codeassist")).toBe(instance);
     expect(authority.get("google")).toBe(instance);
-    expect(authority.isAuthenticated("google")).toBe(true);
+    expect(await authority.isAvailable("google")).toBe(true);
   });
 
-  test("unknown name → isAuthenticated false, getRequestAuth throws", async () => {
+  test("unknown name → isAvailable false, getRequestAuth throws", async () => {
     const authority = new CredentialAuthority();
-    expect(authority.isAuthenticated("nonexistent")).toBe(false);
+    expect(await authority.isAvailable("nonexistent")).toBe(false);
     await expect(authority.getRequestAuth("nonexistent", CTX)).rejects.toThrow(
       "No credential provider for nonexistent"
     );
   });
 
-  test("isAuthenticated swallows a thrown provider check and returns false", () => {
+  test("isAvailable swallows a thrown provider check and returns false", async () => {
     const authority = new CredentialAuthority();
     const throwing: CredentialProvider = {
       catalogName: "throws",
-      isAuthenticated() {
+      async isAvailable(): Promise<boolean> {
         throw new Error("boom");
       },
       async getRequestAuth() {
@@ -337,7 +422,30 @@ describe("CredentialAuthority", () => {
       },
     };
     authority.register(throwing);
-    expect(authority.isAuthenticated("throws")).toBe(false);
+    expect(await authority.isAvailable("throws")).toBe(false);
+  });
+
+  test("invalidate() with no name invalidates every registered provider once", () => {
+    const authority = new CredentialAuthority();
+    const a = new FakeProvider("alpha");
+    const b = new FakeProvider("beta");
+    // alpha is registered under two names — it must still be invalidated ONCE.
+    authority.register(a, ["alpha", "alpha-alias"]);
+    authority.register(b);
+    authority.invalidate();
+    expect(a.invalidateCalls).toBe(1);
+    expect(b.invalidateCalls).toBe(1);
+  });
+
+  test("invalidate(name) targets a single provider", () => {
+    const authority = new CredentialAuthority();
+    const a = new FakeProvider("alpha");
+    const b = new FakeProvider("beta");
+    authority.register(a);
+    authority.register(b);
+    authority.invalidate("alpha");
+    expect(a.invalidateCalls).toBe(1);
+    expect(b.invalidateCalls).toBe(0);
   });
 
   test("getRequestAuth dispatches to the registered provider's artifact", async () => {
@@ -353,7 +461,7 @@ describe("CredentialAuthority", () => {
     const authority = new CredentialAuthority();
     const minimal: CredentialProvider = {
       catalogName: "minimal",
-      isAuthenticated: () => false,
+      isAvailable: async () => false,
       getRequestAuth: async () => ({ headers: {} }),
     };
     authority.register(minimal);
@@ -361,6 +469,19 @@ describe("CredentialAuthority", () => {
     await authority.login("minimal");
     await authority.logout("minimal");
     await authority.login("unknown-too");
+  });
+
+  test("invalidate(name) no-ops for a provider without invalidate()", () => {
+    const authority = new CredentialAuthority();
+    const minimal: CredentialProvider = {
+      catalogName: "minimal",
+      isAvailable: async () => false,
+      getRequestAuth: async () => ({ headers: {} }),
+    };
+    authority.register(minimal);
+    // Should not throw despite no invalidate() defined.
+    expect(() => authority.invalidate("minimal")).not.toThrow();
+    expect(() => authority.invalidate()).not.toThrow();
   });
 });
 
@@ -401,7 +522,15 @@ describe("CredentialAuthority.buildDefault()", () => {
   // not the regular Kimi key. Previously kimi-coding was aliased onto the
   // shared Kimi composite whose API-key half resolved MOONSHOT_API_KEY first,
   // so the coding-plan endpoint received the wrong product's key → 401.
-  test("kimi-coding resolves KIMI_CODING_API_KEY, kimi resolves MOONSHOT_API_KEY", () => {
+  //
+  // We assert the resolved key via the API-key fallback half of each composite:
+  // the regular Kimi credential's fallback is keyed on MOONSHOT_API_KEY, the
+  // coding credential's on KIMI_CODING_API_KEY. Going through getRequestAuth on
+  // the API-key provider surfaces the resolved key in the Authorization header.
+  // (We build the fallback halves with the SAME descriptors the composites use,
+  // keeping the test hermetic regardless of whether a kimi-oauth.json exists on
+  // the running machine — the old sync getApiKey() likewise bypassed OAuth.)
+  test("kimi-coding resolves KIMI_CODING_API_KEY, kimi resolves MOONSHOT_API_KEY", async () => {
     const savedMoon = process.env.MOONSHOT_API_KEY;
     const savedKimi = process.env.KIMI_API_KEY;
     const savedCoding = process.env.KIMI_CODING_API_KEY;
@@ -410,11 +539,23 @@ describe("CredentialAuthority.buildDefault()", () => {
       delete process.env.KIMI_API_KEY;
       process.env.KIMI_CODING_API_KEY = "sk-kimi-coding-dedicated";
 
-      const authority = CredentialAuthority.buildDefault();
+      // Mirror kimi-credential.ts's fallback halves exactly.
+      const kimiFallback = new ApiKeyCredentialProvider({
+        catalogName: "kimi",
+        envVar: "MOONSHOT_API_KEY",
+        aliases: ["KIMI_API_KEY"],
+      });
+      const kimiCodingFallback = new ApiKeyCredentialProvider({
+        catalogName: "kimi-coding",
+        envVar: "KIMI_CODING_API_KEY",
+      });
+
       // The coding provider must NOT pick up the regular Moonshot key.
-      expect(authority.getApiKey("kimi-coding")).toBe("sk-kimi-coding-dedicated");
+      expect(keyFromAuth(await kimiCodingFallback.getRequestAuth(CTX))).toBe(
+        "sk-kimi-coding-dedicated"
+      );
       // The regular Kimi provider must NOT pick up the coding key.
-      expect(authority.getApiKey("kimi")).toBe("sk-moonshot-regular");
+      expect(keyFromAuth(await kimiFallback.getRequestAuth(CTX))).toBe("sk-moonshot-regular");
     } finally {
       if (savedMoon === undefined) delete process.env.MOONSHOT_API_KEY;
       else process.env.MOONSHOT_API_KEY = savedMoon;
@@ -427,13 +568,14 @@ describe("CredentialAuthority.buildDefault()", () => {
 
   // The real OAuth singletons read real credential files; we only assert the
   // negative (no oauth file → not authenticated) to keep the test hermetic.
-  test("OAuth-backed credentials report not-authenticated when no credentials exist", () => {
+  test("OAuth-backed credentials report a boolean without throwing", async () => {
     const authority = CredentialAuthority.buildDefault();
     // These depend on whether the running machine happens to have oauth files;
-    // we don't assert a specific value, only that the sync check never throws.
-    expect(() => authority.isAuthenticated("openai-codex")).not.toThrow();
-    expect(() => authority.isAuthenticated("gemini-codeassist")).not.toThrow();
-    expect(() => authority.isAuthenticated("kimi")).not.toThrow();
-    expect(() => authority.isAuthenticated("vertex")).not.toThrow();
+    // we don't assert a specific value, only that the async check never throws
+    // and resolves to a boolean.
+    for (const name of ["openai-codex", "gemini-codeassist", "kimi", "vertex"]) {
+      const available = await authority.isAvailable(name);
+      expect(typeof available).toBe("boolean");
+    }
   });
 });

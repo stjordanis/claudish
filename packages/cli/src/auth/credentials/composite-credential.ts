@@ -37,17 +37,17 @@ export class CompositeCredentialProvider implements CredentialProvider {
     this.opts = opts;
   }
 
-  isAuthenticated(): boolean {
-    return this.primary.isAuthenticated() || this.fallback.isAuthenticated();
+  async isAvailable(opts?: { allowOpPrompt?: boolean }): Promise<boolean> {
+    return (await this.primary.isAvailable(opts)) || (await this.fallback.isAvailable(opts));
   }
 
-  /** Construction-time key string comes from the API-key fallback half. */
-  apiKeyValue(): string {
-    return this.fallback.apiKeyValue?.() ?? "";
+  invalidate(): void {
+    this.primary.invalidate?.();
+    this.fallback.invalidate?.();
   }
 
   async getRequestAuth(ctx: RequestAuthContext): Promise<RequestAuth> {
-    if (this.primary.isAuthenticated()) {
+    if (await this.primary.isAvailable({ allowOpPrompt: ctx.allowOpPrompt })) {
       try {
         return await this.primary.getRequestAuth(ctx);
       } catch (e: any) {

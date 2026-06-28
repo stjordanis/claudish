@@ -14,7 +14,7 @@ import type { CredentialProvider, RequestAuth, RequestAuthContext } from "./type
 export class VertexCredentialProvider implements CredentialProvider {
   readonly catalogName = "vertex";
 
-  isAuthenticated(): boolean {
+  async isAvailable(): Promise<boolean> {
     return !!process.env.VERTEX_API_KEY || !!getVertexConfig();
   }
 

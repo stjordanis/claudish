@@ -31,25 +31,18 @@ export class CredentialAuthority {
     }
   }
 
-  isAuthenticated(name: string): boolean {
+  /**
+   * ASYNC readiness: resolves env → config → oauth-file → op:// (lazy SDK) for
+   * the provider. Never throws — an unknown provider or a 1Password auth failure
+   * resolves to false. Memoized inside each provider, so the SDK is touched at
+   * most once. This is THE single readiness oracle (replaces the three old sync
+   * ones: isProviderAvailable / isApiKeyAvailable / the old isAuthenticated).
+   */
+  async isAvailable(name: string, opts?: { allowOpPrompt?: boolean }): Promise<boolean> {
     try {
-      return this.registry.get(name)?.isAuthenticated() ?? false;
+      return (await this.registry.get(name)?.isAvailable(opts)) ?? false;
     } catch {
       return false;
-    }
-  }
-
-  /**
-   * SYNC resolved API-key STRING for the handler-construction path (proxy-server
-   * builds transports synchronously, before any request). Resolves env → aliases
-   * → config (op:// already hydrated into env up front). "" for OAuth/local/unknown
-   * providers — they mint per-request auth via getRequestAuth(), not a static key.
-   */
-  getApiKey(name: string): string {
-    try {
-      return this.registry.get(name)?.apiKeyValue?.() ?? "";
-    } catch {
-      return "";
     }
   }
 
@@ -57,6 +50,24 @@ export class CredentialAuthority {
     const p = this.registry.get(name);
     if (!p) throw new Error(`No credential provider for ${name}`);
     return p.getRequestAuth(ctx);
+  }
+
+  /**
+   * Drop any memoized resolution. With no name, invalidate every registered
+   * provider (after a TUI hydrate-on-add or a config change). Idempotent.
+   */
+  invalidate(name?: string): void {
+    if (name) {
+      this.registry.get(name)?.invalidate?.();
+      return;
+    }
+    // Dedup: providers registered under aliases share one instance.
+    const seen = new Set<CredentialProvider>();
+    for (const p of this.registry.values()) {
+      if (seen.has(p)) continue;
+      seen.add(p);
+      p.invalidate?.();
+    }
   }
 
   async login(name: string): Promise<void> {

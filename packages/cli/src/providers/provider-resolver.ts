@@ -40,6 +40,7 @@ import {
 import { parseUrlModel, resolveProvider } from "./provider-registry.js";
 import { resolveRemoteProvider } from "./remote-provider-registry.js";
 import { buildCredentialHint } from "./routing-hints.js";
+import { hasOpSources, resolveOpKeyForEnvVars } from "../auth/credentials/op-source.js";
 
 /**
  * Provider category types
@@ -382,8 +383,38 @@ export function resolveModelProvider(modelId: string | undefined): ProviderResol
  * @param models - Array of model IDs to validate (undefined entries are skipped)
  * @returns Array of resolutions for models that are defined
  */
-export function validateApiKeysForModels(models: (string | undefined)[]): ProviderResolution[] {
-  return models.filter((m): m is string => m !== undefined).map((m) => resolveModelProvider(m));
+export async function validateApiKeysForModels(
+  models: (string | undefined)[]
+): Promise<ProviderResolution[]> {
+  const resolutions = models
+    .filter((m): m is string => m !== undefined)
+    .map((m) => resolveModelProvider(m));
+
+  // The sync `apiKeyAvailable` above reflects env/config/oauth only. For any
+  // resolution still missing its key, consult the ONE op-source seam (lazy SDK)
+  // to see whether 1Password can supply it — making validation the single
+  // authority's 1Password-aware view. Resolved op keys are written through to
+  // process.env so downstream sign-time + spawned children see them.
+  const wantedEnvVars = new Set(
+    resolutions
+      .filter((r) => r.requiredApiKeyEnvVar && !r.apiKeyAvailable)
+      .map((r) => r.requiredApiKeyEnvVar)
+      .filter((v): v is string => typeof v === "string" && v.length > 0)
+  );
+  if (wantedEnvVars.size > 0 && hasOpSources()) {
+    const resolved = await resolveOpKeyForEnvVars(wantedEnvVars, { onAuthFailure: "skip" });
+    for (const [envVar, value] of Object.entries(resolved)) {
+      if (value && !process.env[envVar]) process.env[envVar] = value;
+    }
+    // Re-mark availability for any resolution whose key was just satisfied.
+    for (const r of resolutions) {
+      if (r.requiredApiKeyEnvVar && !r.apiKeyAvailable && process.env[r.requiredApiKeyEnvVar]) {
+        r.apiKeyAvailable = true;
+      }
+    }
+  }
+
+  return resolutions;
 }
 
 /**

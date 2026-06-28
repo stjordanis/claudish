@@ -12,9 +12,6 @@
 import type { RemoteProvider } from "../handlers/shared/remote-provider-types.js";
 import { getRuntimeProviders } from "./runtime-providers.js";
 import { getEndpoint as getConfigEndpoint } from "../profile-config.js";
-import { existsSync } from "node:fs";
-import { join } from "node:path";
-import { homedir } from "node:os";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -1016,55 +1013,8 @@ export function getApiKeyEnvVars(
   };
 }
 
-/**
- * Check if a provider has what it needs to be usable (API key, local service, etc.).
- *
- * A provider is available when ANY of the following is true:
- * - It's a local provider (no API key needed)
- * - It has a publicKeyFallback (e.g. Zen free tier)
- * - Its primary apiKeyEnvVar is set in the environment
- * - Any of its apiKeyAliases are set in the environment
- * - Its oauthFallback credential file exists in ~/.claudish/
- *
- * Used by model-selector to hide providers the user hasn't configured.
- */
-export function isProviderAvailable(def: ProviderDefinition): boolean {
-  // Local providers are always available
-  if (def.isLocal) return true;
-
-  // Providers with public fallback keys are always available
-  if (def.publicKeyFallback) return true;
-
-  // No API key required (e.g. auto-routed providers)
-  if (!def.apiKeyEnvVar) return true;
-
-  // Check primary env var
-  if (process.env[def.apiKeyEnvVar]) return true;
-
-  // Check aliases
-  if (def.apiKeyAliases) {
-    for (const alias of def.apiKeyAliases) {
-      if (process.env[alias]) return true;
-    }
-  }
-
-  // Check OAuth fallback credential file
-  if (def.oauthFallback) {
-    try {
-      if (existsSync(join(homedir(), ".claudish", def.oauthFallback))) return true;
-    } catch {
-      // fs check failed, treat as unavailable
-    }
-  }
-
-  return false;
-}
-
-/**
- * Check provider availability by canonical name.
- */
-export function isProviderAvailableByName(providerName: string): boolean {
-  const def = getProviderByName(providerName);
-  if (!def) return false;
-  return isProviderAvailable(def);
-}
+// NOTE: the sync readiness oracles isProviderAvailable / isProviderAvailableByName
+// were DELETED in the async-credential-layer refactor. Provider readiness is now
+// resolved on demand through the credential authority (auth/credentials/authority.ts
+// → isAvailable), the single source of truth that also pulls from 1Password. The
+// model selector calls credentials.isAvailable() directly.

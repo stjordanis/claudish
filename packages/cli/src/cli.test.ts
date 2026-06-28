@@ -277,6 +277,32 @@ describe("Interactive mode detection with flag-only args", () => {
     expect(config.interactive).toBe(false);
   });
 
+  // Regression: a passthrough -p/--print flag with NO positional prompt must
+  // NOT default to interactive mode. Previously claudish flipped interactive=true,
+  // ran the model picker, then forwarded a bare `-p` (no prompt) to the child
+  // `claude`, which crashed with "Input must be provided either through stdin or
+  // as a prompt argument when using --print". This affected EVERY provider
+  // (OpenAI, Kimi Coding, …) launched via bare interactive `claudish`.
+  test("bare -p flag without prompt → single-shot (not interactive)", async () => {
+    const config = await parseArgs(["--model", "grok", "-p"]);
+    expect(config._hasPrintFlag).toBe(true);
+    expect(config.interactive).toBe(false);
+    expect(config.claudeArgs).toContain("-p");
+  });
+
+  test("bare --print flag without prompt → single-shot (not interactive)", async () => {
+    const config = await parseArgs(["--model", "grok", "--print"]);
+    expect(config._hasPrintFlag).toBe(true);
+    expect(config.interactive).toBe(false);
+    expect(config.claudeArgs).toContain("--print");
+  });
+
+  test("-p with a positional prompt stays single-shot (#76 unchanged)", async () => {
+    const config = await parseArgs(["--model", "grok", "-p", "hello"]);
+    expect(config.interactive).toBe(false);
+    expect(config.claudeArgs).toContain("-p");
+  });
+
   test("no args at all → interactive", async () => {
     const config = await parseArgs(["--model", "grok"]);
     expect(config.interactive).toBe(true);

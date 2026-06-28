@@ -2,20 +2,29 @@
  * Credential Authority — core interfaces.
  *
  * A {@link CredentialProvider} is the single authority for one catalog provider's
- * credentials. It answers two distinct questions:
+ * credentials. The surface is fully ASYNC — readiness and request-auth both pull
+ * from 1Password on demand when env/config/oauth-file miss. There is NO sync
+ * readiness oracle anymore: 1Password resolution is async, so a credential
+ * decision is async too. Resolution is memoized per provider, so the first
+ * await pays the SDK cost and subsequent reads are free.
  *
- *  - `isAuthenticated()` — SYNC, cheap, never-throwing readiness oracle (env var
- *    set? config key present? oauth file on disk? local provider enabled?). This
- *    MUST NOT perform a 1Password SDK call or an OAuth token refresh — those are
- *    async and far too expensive for a routing decision.
+ *  - `isAvailable()` — ASYNC readiness: env var set? config key? oauth file on
+ *    disk? local provider enabled? op:// resolvable? Never throws (a 1Password
+ *    auth failure resolves to `false`, it does not bring down the caller).
  *  - `getRequestAuth()` — ASYNC, produces the rich artifact (headers, optional
  *    endpoint override, optional payload transform) for an outgoing request.
- *    OAuth token refreshes happen here, internally.
+ *    OAuth token refreshes and op:// pulls happen here, internally.
+ *  - `invalidate()` — drop any memoized resolution (after a TUI hydrate-on-add).
  */
 
 export interface RequestAuthContext {
   model: string;
   forceRefresh?: boolean;
+  /**
+   * When set, 1Password resolution is allowed to prompt interactively (TTY only)
+   * for a multi-account picker. Off by default — routing/sign-time never prompt.
+   */
+  allowOpPrompt?: boolean;
 }
 
 export interface RequestAuth {
@@ -27,21 +36,15 @@ export interface RequestAuth {
 export interface CredentialProvider {
   readonly catalogName: string;
   /**
-   * SYNC, cheap, never throws: env var set? config key? oauth file exists?
-   * local enabled? MUST NOT do the 1Password SDK call or an OAuth token refresh.
+   * ASYNC readiness: env var / config key / oauth file / local enabled / op://
+   * resolvable. Never throws — a 1Password auth failure resolves to false so the
+   * server keeps running. Memoized: the SDK is touched at most once per provider.
    */
-  isAuthenticated(): boolean;
-  /** ASYNC: the rich artifact for an outgoing request. Refreshes OAuth tokens internally. */
+  isAvailable(opts?: { allowOpPrompt?: boolean }): Promise<boolean>;
+  /** ASYNC: the rich artifact for an outgoing request. Refreshes OAuth / pulls op:// internally. */
   getRequestAuth(ctx: RequestAuthContext): Promise<RequestAuth>;
-  /**
-   * SYNC: the resolved API-key STRING, for the synchronous handler-construction
-   * path (proxy-server builds transports before any request, no await). Resolves
-   * env → aliases → config (op:// already hydrated into env up front). Returns ""
-   * for OAuth/local providers — they never use a construction-time key string;
-   * they mint per-request auth via getRequestAuth(). Optional: providers that
-   * don't implement it have no construction-time key.
-   */
-  apiKeyValue?(): string;
+  /** Drop any memoized resolution so the next read re-resolves (TUI hydrate-on-add). */
+  invalidate?(): void;
   login?(): Promise<void>;
   logout?(): Promise<void>;
 }

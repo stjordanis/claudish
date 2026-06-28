@@ -12,7 +12,7 @@ import type { CredentialProvider, RequestAuth, RequestAuthContext } from "./type
 export class NativeAnthropicCredentialProvider implements CredentialProvider {
   readonly catalogName = "native-anthropic";
 
-  isAuthenticated(): boolean {
+  async isAvailable(): Promise<boolean> {
     return !!process.env.ANTHROPIC_API_KEY || !!process.env.ANTHROPIC_AUTH_TOKEN;
   }
 

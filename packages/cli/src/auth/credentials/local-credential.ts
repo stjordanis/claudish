@@ -17,7 +17,7 @@ export class LocalCredentialProvider implements CredentialProvider {
     this.catalogName = catalogName;
   }
 
-  isAuthenticated(): boolean {
+  async isAvailable(): Promise<boolean> {
     return isLocalProviderEnabled(this.catalogName);
   }
 

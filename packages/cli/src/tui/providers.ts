@@ -3,7 +3,6 @@
  * Derived from BUILTIN_PROVIDERS — single source of truth.
  */
 
-import { credentials } from "../auth/credentials/authority.js";
 import { hasOAuthCredentials } from "../auth/oauth-registry.js";
 import { isLocalProviderEnabled } from "../profile-config.js";
 import type { LocalLiveness } from "../providers/local-liveness.js";
@@ -151,10 +150,14 @@ export function providerIsReady(
   // transport has no key). The direct row is API-key-only (no oauthSlug), so for
   // a NON-OAuth-capable provider we trust ONLY the source classifier (env / cfg
   // / public), never the authority's OAuth-derived bool.
-  if (!p.oauthSlug) {
-    return providerAuthSource(p, config) !== null;
-  }
-  return credentials.isAuthenticated(p.catalogName) || providerAuthSource(p, config) !== null;
+  // providerAuthSource is the SYNC readiness classifier (env / cfg / oauth-file /
+  // public / local). It already returns "oauth" when hasOAuthCredentials() is
+  // true for an OAuth-capable provider (covers codex/gemini/kimi), and reads
+  // process.env — which the credential authority gap-fills with any resolved
+  // op:// key. So the config TUI's display readiness is fully covered here
+  // WITHOUT an async authority call (kept sync for React render paths). The
+  // authority remains the source of truth for routing/sign-time (async).
+  return providerAuthSource(p, config) !== null;
 }
 
 /**

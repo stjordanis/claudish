@@ -12,11 +12,15 @@
 
 import { describe, expect, mock, test } from "bun:test";
 import {
+  type ModelInfo,
   buildExplicitModelSpec,
   isUserDeployedProvider,
   pickerProviderToFirebaseSlug,
+  resolveProviderDisplayPrice,
+  resolveProviderExternalId,
 } from "./model-selector.js";
 import { createCatalogClient } from "./providers/model-catalog.js";
+import { getProviderByName } from "./providers/provider-definitions.js";
 
 // ─── pickerProviderToFirebaseSlug ────────────────────────────────────────────
 
@@ -113,6 +117,141 @@ describe("buildExplicitModelSpec", () => {
 
   test("returns model ID unchanged when provider has no prefix entry", () => {
     expect(buildExplicitModelSpec("unknown-provider", "some-model")).toBe("some-model");
+  });
+});
+
+// ─── resolveProviderExternalId (exact callable-spec rendering) ───────────────
+
+describe("resolveProviderExternalId", () => {
+  // gpt-5 is served bare by OpenAI but vendor-prefixed by OpenRouter / Zen.
+  const gpt5: ModelInfo = {
+    id: "gpt-5",
+    name: "GPT-5",
+    description: "",
+    provider: "OpenAI",
+    aggregators: [
+      { provider: "openai", externalId: "gpt-5", confidence: "api_official" },
+      { provider: "openrouter", externalId: "openai/gpt-5", confidence: "gateway_official" },
+      { provider: "opencode-zen", externalId: "openai/gpt-5", confidence: "gateway_official" },
+    ],
+  };
+
+  test("OpenRouter row uses the vendor-prefixed externalId", () => {
+    // → or@openai/gpt-5
+    expect(resolveProviderExternalId("openrouter", gpt5)).toBe("openai/gpt-5");
+    expect(buildExplicitModelSpec("openrouter", resolveProviderExternalId("openrouter", gpt5))).toBe(
+      "openrouter@openai/gpt-5"
+    );
+  });
+
+  test("OpenAI row uses the bare externalId", () => {
+    // → oai@gpt-5
+    expect(resolveProviderExternalId("openai", gpt5)).toBe("gpt-5");
+    expect(buildExplicitModelSpec("openai", resolveProviderExternalId("openai", gpt5))).toBe(
+      "oai@gpt-5"
+    );
+  });
+
+  test("Zen row uses whatever externalId the catalog stores for opencode-zen", () => {
+    // The catalog currently stores "openai/gpt-5" for Zen; we render exactly
+    // that so the displayed spec is the true callable id (zen@openai/gpt-5).
+    expect(resolveProviderExternalId("zen", gpt5)).toBe("openai/gpt-5");
+  });
+
+  test("falls back to the bare model id when no aggregator matches the provider", () => {
+    const noAgg: ModelInfo = { id: "llama3.2:3b", name: "llama", description: "", provider: "Ollama" };
+    expect(resolveProviderExternalId("ollama", noAgg)).toBe("llama3.2:3b");
+    // A provider with aggregators but none for the selected provider also falls back.
+    expect(resolveProviderExternalId("deepseek", gpt5)).toBe("gpt-5");
+  });
+});
+
+// ─── resolveProviderDisplayPrice (true per-aggregator pricing) ───────────────
+
+describe("resolveProviderDisplayPrice", () => {
+  // gpt-5: owner OpenAI lists $1.25/$10; aggregators charge their OWN rates.
+  // The slim catalog now carries per-aggregator pricing on each entry.
+  const gpt5: ModelInfo = {
+    id: "gpt-5",
+    name: "GPT-5",
+    description: "",
+    provider: "OpenAI",
+    pricing: { input: "$1.25", output: "$10.00", average: "$5.63/1M" },
+    aggregators: [
+      {
+        provider: "openai",
+        externalId: "gpt-5",
+        confidence: "api_official",
+        pricing: { input: 1.25, output: 10 },
+      },
+      {
+        provider: "openrouter",
+        externalId: "openai/gpt-5",
+        confidence: "gateway_official",
+        pricing: { input: 1.3, output: 10.5 }, // marked-up gateway rate
+      },
+      {
+        provider: "opencode-zen",
+        externalId: "openai/gpt-5",
+        confidence: "gateway_official",
+        pricing: { input: 1.07, output: 8.5 }, // cheaper gateway rate
+      },
+    ],
+  };
+
+  test("shows the selected aggregator's TRUE per-gateway price, not the owner price", () => {
+    // OpenRouter: ($1.30 + $10.50)/2 = $5.90/1M
+    expect(resolveProviderDisplayPrice("openrouter", gpt5)).toBe("$5.90/1M");
+    // OpenCode Zen: ($1.07 + $8.50)/2 = $4.79/1M (different from OpenRouter — the point)
+    expect(resolveProviderDisplayPrice("zen", gpt5)).toBe("$4.79/1M");
+    // OpenAI (owner): ($1.25 + $10)/2 = $5.63/1M
+    expect(resolveProviderDisplayPrice("openai", gpt5)).toBe("$5.63/1M");
+  });
+
+  test("falls back to model-level price when the aggregator entry has no pricing", () => {
+    const noEntryPrice: ModelInfo = {
+      id: "m",
+      name: "m",
+      description: "",
+      provider: "OpenAI",
+      pricing: { input: "$1.00", output: "$2.00", average: "$1.50/1M" },
+      aggregators: [
+        // openrouter entry exists but carries NO pricing → fall back to model.pricing
+        { provider: "openrouter", externalId: "x/m", confidence: "gateway_official" },
+      ],
+    };
+    expect(resolveProviderDisplayPrice("openrouter", noEntryPrice)).toBe("$1.50/1M");
+  });
+
+  test("returns N/A when neither aggregator nor model pricing is known", () => {
+    const noPrice: ModelInfo = {
+      id: "m",
+      name: "m",
+      description: "",
+      provider: "OpenAI",
+      aggregators: [{ provider: "openrouter", externalId: "x/m", confidence: "gateway_official" }],
+    };
+    expect(resolveProviderDisplayPrice("openrouter", noPrice)).toBe("N/A");
+  });
+});
+
+// ─── fixedModel single-model subscription providers (Kimi Coding) ────────────
+
+describe("fixedModel providers", () => {
+  test("kimi-coding declares its single fixed model", () => {
+    const def = getProviderByName("kimi-coding");
+    expect(def?.fixedModel).toBe("kimi-for-coding");
+    // The picker auto-selects buildExplicitModelSpec(provider, fixedModel).
+    expect(buildExplicitModelSpec("kimi-coding", def!.fixedModel!)).toBe("kc@kimi-for-coding");
+  });
+
+  test("multi-model providers do not declare a fixedModel", () => {
+    // Owner Kimi (not the coding plan) and other multi-model subscriptions must
+    // keep showing their full catalog — gc@/mmc@ are intentionally NOT pinned.
+    expect(getProviderByName("kimi")?.fixedModel).toBeUndefined();
+    expect(getProviderByName("glm-coding")?.fixedModel).toBeUndefined();
+    expect(getProviderByName("minimax-coding")?.fixedModel).toBeUndefined();
+    expect(getProviderByName("openai")?.fixedModel).toBeUndefined();
   });
 });
 

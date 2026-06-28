@@ -15,6 +15,7 @@
 
 import { confirm, input, search, select } from "@inquirer/prompts";
 import {
+  type AggregatorEntry,
   type ModelDoc,
   type RecommendedModelEntry,
   getRecommendedModels,
@@ -25,11 +26,9 @@ import {
   type CatalogModel,
   createCatalogClient,
 } from "./providers/model-catalog.js";
-import {
-  getDisplayName,
-  getProviderByName,
-  isProviderAvailable,
-} from "./providers/provider-definitions.js";
+import { getDisplayName, getProviderByName } from "./providers/provider-definitions.js";
+import { fetchOllamaModels } from "./providers/ollama-discovery.js";
+import { credentials } from "./auth/credentials/authority.js";
 
 /**
  * Model data structure
@@ -53,6 +52,13 @@ export interface ModelInfo {
   supportsVision?: boolean;
   isFree?: boolean;
   source?: string; // Which platform the model is from
+  /**
+   * Per-provider routing index: which providers serve this model and under
+   * what externalId (vendor-prefixed where the provider requires it, e.g.
+   * `openai/gpt-5` for OpenRouter). Preserved so the picker can render each
+   * row as the exact callable spec for the selected provider.
+   */
+  aggregators?: AggregatorEntry[];
 }
 
 /**
@@ -83,6 +89,8 @@ export const pickerProviderToFirebaseSlug: Record<string, string> = {
   glm: "z-ai",
   "glm-coding": "z-ai",
   "z-ai": "z-ai",
+  sakana: "sakana",
+  "sakana-coding": "sakana",
   zen: "opencode-zen",
   "opencode-zen": "opencode-zen",
   "opencode-zen-go": "opencode-zen-go",
@@ -260,6 +268,7 @@ function catalogModelToModelInfo(model: CatalogModel): ModelInfo {
     supportsReasoning: model.capabilities?.thinking,
     supportsVision: model.capabilities?.vision,
     source: providerLabel,
+    aggregators: model.aggregators,
   };
 }
 
@@ -416,6 +425,26 @@ function formatModelChoice(model: ModelInfo, showSource = false): string {
 }
 
 /**
+ * Format a per-provider picker row as the EXACT callable spec for the selected
+ * provider, e.g. `zen@gpt-5` or `or@openai/gpt-5`. The spec shown is precisely
+ * what the user could type as `--model`, using the provider's own externalId
+ * (vendor-prefixed where that provider requires it).
+ */
+function formatModelChoiceAsSpec(model: ModelInfo, spec: string, priceStr: string): string {
+  const caps = [
+    model.supportsTools ? "T" : "",
+    model.supportsReasoning ? "R" : "",
+    model.supportsVision ? "V" : "",
+  ]
+    .filter(Boolean)
+    .join("");
+  const capsStr = caps ? ` [${caps}]` : "";
+  const ctxStr = model.context || "N/A";
+  const dateStr = model.releaseDate ? `, ${model.releaseDate.slice(0, 7)}` : "";
+  return `${spec} (${priceStr}, ${ctxStr}${capsStr}${dateStr})`;
+}
+
+/**
  * Provider filter aliases for @prefix search syntax.
  * These map to actual configured runtime providers, not Firebase model vendors.
  */
@@ -452,6 +481,10 @@ const PROVIDER_FILTER_ALIASES: Record<string, string> = {
   litellm: "litellm",
   ll: "litellm",
   deepseek: "deepseek",
+  sakana: "sakana",
+  fugu: "sakana",
+  "sakana-coding": "sakana-coding",
+  sc: "sakana-coding",
 };
 
 /**
@@ -579,7 +612,7 @@ export async function selectModel(options: ModelSelectorOptions = {}): Promise<s
 
     models = topModels.length > 0 ? topModels : recommendedModels;
 
-    pickerProviders = toPickerProviders(getInteractiveProviderChoices());
+    pickerProviders = toPickerProviders(await getInteractiveProviderChoices());
   }
 
   const loadRemoteModels = async (
@@ -614,7 +647,7 @@ export async function selectModel(options: ModelSelectorOptions = {}): Promise<s
 
   try {
     if (!freeOnly && !message && pickerProviders.length > 1) {
-      const interactiveProviderChoices = getInteractiveProviderChoices();
+      const interactiveProviderChoices = await getInteractiveProviderChoices();
       const providerChoices = [
         {
           name: "All providers",
@@ -733,6 +766,13 @@ const ALL_PROVIDER_CHOICES: Array<{
   },
   { name: "xAI / Grok", value: "x-ai", description: "Direct API", provider: "x-ai" },
   { name: "DeepSeek", value: "deepseek", description: "Direct API", provider: "deepseek" },
+  { name: "Sakana Fugu", value: "sakana", description: "Direct API", provider: "sakana" },
+  {
+    name: "Sakana Fugu Subscription",
+    value: "sakana-coding",
+    description: "Subscription plan",
+    provider: "sakana-coding",
+  },
   { name: "MiniMax", value: "minimax", description: "Direct API", provider: "minimax" },
   {
     name: "MiniMax Coding",
@@ -783,15 +823,24 @@ const ALL_PROVIDER_CHOICES: Array<{
 
 /**
  * Get provider choices filtered by provider availability.
- * Uses isProviderAvailable() from ProviderDefinition — each provider validates
- * itself (API keys, OAuth credentials, local service, public fallback).
+ *
+ * Availability is resolved ON DEMAND through the credential authority — the
+ * single source of truth. Because the authority resolves env → config →
+ * oauth-file → 1Password (lazy SDK) per provider, op:// glob-backed providers
+ * show up here WITHOUT any pre-hydration step: there is no longer a "before/after
+ * hydration" window that hid them. Resolution is concurrent (each call funnels
+ * through the SDK serialization queue internally).
  */
-function getProviderChoices() {
-  return ALL_PROVIDER_CHOICES.filter((choice) => {
-    if (!choice.provider) return true; // skip, custom — always shown
-    const def = getProviderByName(choice.provider);
-    return def ? isProviderAvailable(def) : true;
-  });
+async function getProviderChoices() {
+  const checks = await Promise.all(
+    ALL_PROVIDER_CHOICES.map(async (choice) => {
+      if (!choice.provider) return true; // skip, custom — always shown
+      // The authority knows every catalog provider; isAvailable resolves the
+      // full env/config/oauth/op:// readiness for that provider name.
+      return credentials.isAvailable(choice.provider);
+    })
+  );
+  return ALL_PROVIDER_CHOICES.filter((_, i) => checks[i]);
 }
 
 /**
@@ -806,6 +855,8 @@ const PROVIDER_MODEL_PREFIX: Record<string, string> = {
   "openai-codex": "cx@",
   "x-ai": "x-ai@",
   deepseek: "ds@",
+  sakana: "sakana@",
+  "sakana-coding": "sc@",
   minimax: "mm@",
   kimi: "kimi@",
   "minimax-coding": "mmc@",
@@ -820,8 +871,8 @@ const PROVIDER_MODEL_PREFIX: Record<string, string> = {
   openrouter: "openrouter@",
 };
 
-function getInteractiveProviderChoices() {
-  return getProviderChoices().filter((choice) => choice.value !== "skip");
+async function getInteractiveProviderChoices() {
+  return (await getProviderChoices()).filter((choice) => choice.value !== "skip");
 }
 
 function toPickerProviders(choices: Array<{ name: string; value: string }>): PickerProvider[] {
@@ -842,6 +893,57 @@ export function buildExplicitModelSpec(provider: string, modelId: string): strin
     return modelId;
   }
   return modelId.startsWith(prefix) ? modelId : `${prefix}${modelId}`;
+}
+
+/**
+ * The external/vendor id a model is called by under the SELECTED provider.
+ *
+ * Aggregators carry a per-provider `externalId` in `aggregators[]` — e.g.
+ * gpt-5 is `gpt-5` under OpenAI but `openai/gpt-5` under OpenRouter. We render
+ * each picker row as the exact spec the user could type for the chosen
+ * provider, so we pick the externalId whose `provider` matches the selected
+ * provider's Firebase slug, falling back to the bare model id when there's no
+ * aggregator entry (owner-path providers, or a model that lists no aggregator
+ * for this provider — its bare id is already the callable id).
+ *
+ * Exported for unit tests.
+ */
+export function resolveProviderExternalId(provider: string, model: ModelInfo): string {
+  const match = resolveProviderAggregatorEntry(provider, model);
+  if (match?.externalId) return match.externalId;
+  return model.id;
+}
+
+/**
+ * The aggregators[] entry that serves this model under the SELECTED provider
+ * (matched by the provider's Firebase slug), or undefined when none matches.
+ * Shared by externalId resolution and per-aggregator price resolution.
+ */
+function resolveProviderAggregatorEntry(
+  provider: string,
+  model: ModelInfo
+): AggregatorEntry | undefined {
+  const firebaseSlug = pickerProviderToFirebaseSlug[provider];
+  if (!firebaseSlug || !model.aggregators) return undefined;
+  return model.aggregators.find(
+    (a) => a.provider.toLowerCase() === firebaseSlug.toLowerCase()
+  );
+}
+
+/**
+ * Display price for a picker row under the SELECTED provider.
+ *
+ * Prefers the TRUE per-aggregator rate (the matched aggregators[] entry's
+ * `pricing`, the gateway's actual rate) over the owner/model-level price — an
+ * aggregator like OpenRouter/OpenCode Zen can charge differently from the model
+ * owner. Falls back to the model-level price (owner providers already carry it)
+ * and finally "N/A". Exported for unit tests.
+ */
+export function resolveProviderDisplayPrice(provider: string, model: ModelInfo): string {
+  const entry = resolveProviderAggregatorEntry(provider, model);
+  const entryPrice = formatAveragePricing(entry?.pricing);
+  if (entryPrice?.average) return entryPrice.average;
+  return model.pricing?.average || "N/A";
 }
 
 /**
@@ -884,6 +986,58 @@ async function searchModelsForPickerProvider(
 }
 
 /**
+ * Render a filterable picker over a STATIC in-memory model list (no catalog
+ * client) and return the built model spec. Used for providers whose model list
+ * comes from a local API rather than Firebase (e.g. Ollama's /api/tags).
+ *
+ * Returns `null` when the user picks the "Enter custom model ID" escape hatch,
+ * so the caller can fall through to its free-text prompt.
+ */
+async function pickModelFromList(
+  provider: string,
+  displayName: string,
+  tierName: string,
+  models: ModelInfo[]
+): Promise<string | null> {
+  const CUSTOM_VALUE = "__custom_model__";
+
+  const selected = await search<string>({
+    message:
+      tierName === "interactive session"
+        ? `Select ${displayName} model (type to filter):`
+        : `Select model for ${tierName} (type to filter):`,
+    pageSize: 15,
+    source: async (term) => {
+      const needle = term?.toLowerCase() ?? "";
+      const filtered = needle
+        ? models.filter((m) => m.id.toLowerCase().includes(needle))
+        : models.slice(0, 25);
+
+      const choices = filtered.map((m) => {
+        const externalId = resolveProviderExternalId(provider, m);
+        const spec = buildExplicitModelSpec(provider, externalId);
+        const priceStr = resolveProviderDisplayPrice(provider, m);
+        return {
+          name: formatModelChoiceAsSpec(m, spec, priceStr),
+          value: spec,
+          description: m.description?.slice(0, 80),
+        };
+      });
+
+      choices.push({
+        name: ">> Enter custom model ID",
+        value: CUSTOM_VALUE,
+        description: `Type a custom ${displayName} model name`,
+      });
+
+      return choices;
+    },
+  });
+
+  return selected === CUSTOM_VALUE ? null : selected;
+}
+
+/**
  * Select a model from a specific provider with filterable search.
  * Rely on Firebase for model data via CatalogClient — no per-provider branching.
  */
@@ -896,6 +1050,38 @@ async function selectModelFromProvider(
 ): Promise<string> {
   const prefix = PROVIDER_MODEL_PREFIX[provider] || `${provider}@`;
   const displayName = getPickerDisplayName(provider);
+
+  // Single-model subscription providers (e.g. Kimi Coding) serve exactly one
+  // model. Skip the model prompt entirely and auto-select it — showing the
+  // owner's full multi-model catalog and letting the user pick a model the
+  // endpoint can't serve is both confusing and broken.
+  const def = getProviderByName(provider);
+  if (def?.fixedModel) {
+    return buildExplicitModelSpec(provider, def.fixedModel);
+  }
+
+  // Ollama (local): Firebase has no catalog, but the daemon lists installed
+  // models at /api/tags. Show that list (filterable, with a custom-entry escape
+  // hatch) instead of forcing the user to type a model name from memory. Falls
+  // through to free-text below when the daemon is unreachable or has no models.
+  if (provider === "ollama") {
+    const ollamaModels = await fetchOllamaModels({ enrichCapabilities: false });
+    const chatModels: ModelInfo[] = ollamaModels.map((m) => ({
+      id: m.name, // bare name, e.g. "llama3.2:3b" — prefix added by buildExplicitModelSpec
+      name: m.name,
+      description: m.description,
+      provider: displayName,
+      supportsTools: m.supportsTools,
+      isFree: true,
+      source: displayName,
+    }));
+    if (chatModels.length > 0) {
+      const picked = await pickModelFromList(provider, displayName, tierName, chatModels);
+      if (picked) return picked;
+      // picked === null → user chose the custom-entry hatch; fall through.
+    }
+    // Unreachable daemon / no models / custom entry → free-text below.
+  }
 
   // Local / user-deployed providers: Firebase has no catalog, free-text only.
   // No prefix advertising — buildExplicitModelSpec adds it silently.
@@ -947,11 +1133,20 @@ async function selectModelFromProvider(
         filtered = providerModels.slice(0, 25);
       }
 
-      const choices = filtered.map((m) => ({
-        name: formatModelChoice(m, true),
-        value: buildExplicitModelSpec(provider, m.id),
-        description: m.description?.slice(0, 80),
-      }));
+      const choices = filtered.map((m) => {
+        // Show + return the exact callable spec for the SELECTED provider,
+        // using that provider's own externalId (vendor-prefixed where needed,
+        // e.g. `or@openai/gpt-5`; bare for owner/aggregator providers that
+        // accept bare ids, e.g. `zen@gpt-5`).
+        const externalId = resolveProviderExternalId(provider, m);
+        const spec = buildExplicitModelSpec(provider, externalId);
+        const priceStr = resolveProviderDisplayPrice(provider, m);
+        return {
+          name: formatModelChoiceAsSpec(m, spec, priceStr),
+          value: spec,
+          description: m.description?.slice(0, 80),
+        };
+      });
 
       // Always show the custom-entry escape hatch.
       choices.push({
@@ -1010,7 +1205,7 @@ export async function selectModelsForProfile(): Promise<{
     // Step 1: Select provider
     const provider = await select({
       message: `Select provider for ${tier.name} tier (${tier.description}):`,
-      choices: getProviderChoices(),
+      choices: await getProviderChoices(),
       default: lastProvider,
     });
 

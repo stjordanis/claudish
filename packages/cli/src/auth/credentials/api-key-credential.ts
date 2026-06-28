@@ -1,31 +1,32 @@
 /**
  * ApiKeyCredentialProvider — the credential authority for API-key providers.
  *
- * Resolution order for the request KEY (all SYNC):
+ * Resolution order (ASYNC, memoized per provider):
  *   1. process.env[envVar]
  *   2. process.env[alias] for each alias
  *   3. getApiKey(envVar) — config.json apiKeys map
+ *   4. 1Password (op:// — lazy SDK, only when 1-3 missed AND an op source exists)
  *
- * `isAuthenticated()` additionally honors two affordances that the legacy
- * `isProviderAvailable()` oracle granted (and which `hasCredentialsForProvider`
- * relied on), so the authority is behavior-equivalent to the old readiness gate:
- *   - `publicKeyFallback`: the provider has a free/public key, so it is ALWAYS
- *     authenticated (e.g. OpenCode Zen's "public" tier).
+ * When step 4 resolves a key, the value is written THROUGH into process.env so
+ * spawned child processes (MCP team/channel) inherit it and never touch the SDK.
+ * The authority is the ONLY code that pushes op:// keys into process.env.
+ *
+ * `isAvailable()` additionally honors two affordances the legacy oracle granted:
+ *   - `publicKeyFallback`: the provider has a free/public key → always available.
  *   - `oauthFallback`: a `<file>` under ~/.claudish/ — if that OAuth credential
- *     file exists, the provider is authenticated even without an env/config key
- *     (mirrors `isProviderAvailable`'s existsSync branch). This is the SAME
- *     cheap existsSync the old oracle did — no token parse, still sync.
+ *     file exists, the provider is available even without an env/config/op key.
  *
- * NOTE on 1Password: this provider does NOT resolve `op://` references here.
- * That is an async SDK call and `isAuthenticated()` must stay sync. The up-front
- * op:// resolve hydrates process.env at startup, so this sync check sees
- * glob-resolved keys via step (1).
+ * Resolution is memoized: the first await pays the env/config/op cost; later
+ * reads return the cached result. `invalidate()` clears it (TUI hydrate-on-add).
+ * An empty/failed op resolve is NOT cached as "" — it's cached as "unavailable"
+ * only after the op source is consulted, and `invalidate()` re-opens it.
  */
 
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { getApiKey } from "../../profile-config.js";
+import { hasOpSources, resolveOpKeyForEnvVars } from "./op-source.js";
 import type { CredentialProvider, RequestAuth, RequestAuthContext } from "./types.js";
 
 export interface ApiKeyDescriptor {
@@ -35,13 +36,13 @@ export interface ApiKeyDescriptor {
   authScheme?: "bearer" | "x-api-key";
   staticHeaders?: Record<string, string>;
   /**
-   * Provider has a public/free key → always authenticated regardless of env or
+   * Provider has a public/free key → always available regardless of env or
    * config. Mirrors ProviderDefinition.publicKeyFallback.
    */
   publicKeyFallback?: boolean;
   /**
    * OAuth credential filename under ~/.claudish/ (e.g. "codex-oauth.json"). If
-   * the file exists, the provider counts as authenticated even with no API key.
+   * the file exists, the provider counts as available even with no API key.
    * Mirrors ProviderDefinition.oauthFallback.
    */
   oauthFallback?: string;
@@ -56,6 +57,11 @@ export class ApiKeyCredentialProvider implements CredentialProvider {
   private readonly publicKeyFallback: boolean;
   private readonly oauthFallback?: string;
 
+  /** Memoized resolved key ("" = resolved-and-empty). undefined = not yet resolved. */
+  private cachedKey: string | undefined;
+  /** In-flight resolution, so concurrent callers share one op pull. */
+  private resolving: Promise<string> | undefined;
+
   constructor(descriptor: ApiKeyDescriptor) {
     this.catalogName = descriptor.catalogName;
     this.envVar = descriptor.envVar;
@@ -66,8 +72,8 @@ export class ApiKeyCredentialProvider implements CredentialProvider {
     this.oauthFallback = descriptor.oauthFallback;
   }
 
-  /** SYNC: env → aliases → config.json apiKeys. Never resolves op://. */
-  private resolveSync(): string | undefined {
+  /** SYNC: env → aliases → config.json apiKeys. Does NOT touch 1Password. */
+  private resolveFromEnvConfig(): string | undefined {
     // NOTE: map alias names to their VALUES before .find — `aliases.find(a =>
     // process.env[a])` would return the alias NAME (a truthy string), so the
     // credential would send the literal env-var name as the API key → 401.
@@ -88,18 +94,65 @@ export class ApiKeyCredentialProvider implements CredentialProvider {
     }
   }
 
-  isAuthenticated(): boolean {
+  /**
+   * ASYNC resolved key: env → aliases → config → op:// (lazy). Memoized; the
+   * op pull happens at most once. Writes a resolved op key THROUGH to
+   * process.env so spawned children inherit it.
+   */
+  private async resolveKey(opts?: { allowOpPrompt?: boolean }): Promise<string> {
+    if (this.cachedKey !== undefined) return this.cachedKey;
+    if (this.resolving) return this.resolving;
+
+    this.resolving = (async () => {
+      // Steps 1-3: env / aliases / config — no SDK.
+      const local = this.resolveFromEnvConfig();
+      if (local) {
+        this.cachedKey = local;
+        return local;
+      }
+      // Step 4: 1Password, only if a source exists (the sync sniff gates the SDK).
+      if (hasOpSources()) {
+        const wanted = new Set<string>([this.envVar, ...this.aliases]);
+        const resolved = await resolveOpKeyForEnvVars(wanted, {
+          onAuthFailure: "skip",
+          allowPrompt: opts?.allowOpPrompt ?? false,
+        });
+        const value =
+          resolved[this.envVar] ?? this.aliases.map((a) => resolved[a]).find((v) => !!v);
+        if (value) {
+          // Write-through mirror: child processes inherit this, no re-resolve.
+          process.env[this.envVar] = value;
+          this.cachedKey = value;
+          return value;
+        }
+      }
+      this.cachedKey = "";
+      return "";
+    })();
+
+    try {
+      return await this.resolving;
+    } finally {
+      this.resolving = undefined;
+    }
+  }
+
+  async isAvailable(opts?: { allowOpPrompt?: boolean }): Promise<boolean> {
     if (this.publicKeyFallback) return true;
-    return !!this.resolveSync() || this.hasOauthFallbackFile();
+    // Cheap checks first — avoid the op pull when an oauth file already qualifies.
+    if (this.resolveFromEnvConfig()) return true;
+    if (this.hasOauthFallbackFile()) return true;
+    const key = await this.resolveKey(opts);
+    return !!key;
   }
 
-  /** SYNC resolved key string for the construction path (env → aliases → config). */
-  apiKeyValue(): string {
-    return this.resolveSync() ?? "";
+  invalidate(): void {
+    this.cachedKey = undefined;
+    this.resolving = undefined;
   }
 
-  async getRequestAuth(_ctx: RequestAuthContext): Promise<RequestAuth> {
-    const key = this.resolveSync() || "";
+  async getRequestAuth(ctx: RequestAuthContext): Promise<RequestAuth> {
+    const key = await this.resolveKey({ allowOpPrompt: ctx.allowOpPrompt });
     let headers: Record<string, string>;
     if (this.authScheme === "x-api-key") {
       headers = { "x-api-key": key, ...this.staticHeaders };

@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, test, expect } from "bun:test";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+
 import {
   matchRoutingRule,
   buildRoutingChain,
@@ -23,6 +24,7 @@ import { DEFAULT_ROUTING_RULES } from "./default-routing-rules.js";
 import { PROVIDER_SHORTCUTS } from "./model-parser.js";
 import { PROVIDER_TO_PREFIX, DISPLAY_NAMES } from "./auto-route.js";
 import type { RoutingRules } from "../profile-config.js";
+import { __resetSniffForTests } from "../auth/credentials/op-source.js";
 
 // ---------------------------------------------------------------------------
 // matchRoutingRule — pattern matching
@@ -395,6 +397,11 @@ const savedEnv: Record<string, string | undefined> = {};
 
 describe("route()", () => {
   beforeEach(() => {
+    // Disable 1Password for routing tests so route()'s credential resolution
+    // never pulls a real op:// key from the host config (which would make a
+    // "no credentials → no-route" assertion fail). Mock-free env flag → no bleed.
+    process.env.CLAUDISH_DISABLE_OP = "1";
+    __resetSniffForTests();
     // Snapshot and clear credential env vars so each test starts clean.
     for (const key of ENV_KEYS_TO_CLEAR) {
       savedEnv[key] = process.env[key];
@@ -403,6 +410,8 @@ describe("route()", () => {
   });
 
   afterEach(() => {
+    delete process.env.CLAUDISH_DISABLE_OP;
+    __resetSniffForTests();
     // Restore env vars (preserves the host's actual config for other tests).
     for (const key of ENV_KEYS_TO_CLEAR) {
       if (savedEnv[key] === undefined) {
@@ -413,24 +422,24 @@ describe("route()", () => {
     }
   });
 
-  test("claude-opus-4-7 with ANTHROPIC_API_KEY → primary native-anthropic", () => {
+  test("claude-opus-4-7 with ANTHROPIC_API_KEY → primary native-anthropic", async () => {
     process.env.ANTHROPIC_API_KEY = "sk-ant-test";
-    const plan = route("claude-opus-4-7", DEFAULT_ROUTING_RULES);
+    const plan = await route("claude-opus-4-7", DEFAULT_ROUTING_RULES);
     expect(plan.kind).toBe("ok");
     if (plan.kind !== "ok") return;
     expect(plan.primary.provider).toBe("native-anthropic");
   });
 
-  test("claude-opus-4-7 with only OPENROUTER_API_KEY → primary openrouter", () => {
+  test("claude-opus-4-7 with only OPENROUTER_API_KEY → primary openrouter", async () => {
     process.env.OPENROUTER_API_KEY = "or-test";
-    const plan = route("claude-opus-4-7", DEFAULT_ROUTING_RULES);
+    const plan = await route("claude-opus-4-7", DEFAULT_ROUTING_RULES);
     expect(plan.kind).toBe("ok");
     if (plan.kind !== "ok") return;
     expect(plan.primary.provider).toBe("openrouter");
   });
 
-  test("claude-opus-4-7 with no credentials → no-route, hint mentions both providers", () => {
-    const plan = route("claude-opus-4-7", DEFAULT_ROUTING_RULES);
+  test("claude-opus-4-7 with no credentials → no-route, hint mentions both providers", async () => {
+    const plan = await route("claude-opus-4-7", DEFAULT_ROUTING_RULES);
     expect(plan.kind).toBe("no-route");
     if (plan.kind !== "no-route") return;
     expect(plan.hint).toBeDefined();
@@ -440,27 +449,27 @@ describe("route()", () => {
     expect(plan.hint).toContain("OPENROUTER_API_KEY");
   });
 
-  test("explicit prefix native-anthropic@claude-opus-4-7 with ANTHROPIC_API_KEY → ok", () => {
+  test("explicit prefix native-anthropic@claude-opus-4-7 with ANTHROPIC_API_KEY → ok", async () => {
     process.env.ANTHROPIC_API_KEY = "sk-ant-test";
-    const plan = route("native-anthropic@claude-opus-4-7", DEFAULT_ROUTING_RULES);
+    const plan = await route("native-anthropic@claude-opus-4-7", DEFAULT_ROUTING_RULES);
     expect(plan.kind).toBe("ok");
     if (plan.kind !== "ok") return;
     expect(plan.primary.provider).toBe("native-anthropic");
     expect(plan.fallbacks).toHaveLength(0);
   });
 
-  test("explicit prefix openai@gpt-5 with no OPENAI_API_KEY → no-route, NO silent OR fallback", () => {
+  test("explicit prefix openai@gpt-5 with no OPENAI_API_KEY → no-route, NO silent OR fallback", async () => {
     // Even with OPENROUTER_API_KEY set, an explicit openai@ prefix must NOT
     // silently reroute to OpenRouter.
     process.env.OPENROUTER_API_KEY = "or-test";
-    const plan = route("openai@gpt-5", DEFAULT_ROUTING_RULES);
+    const plan = await route("openai@gpt-5", DEFAULT_ROUTING_RULES);
     expect(plan.kind).toBe("no-route");
     if (plan.kind !== "no-route") return;
     // Hint should mention the missing OpenAI key, not OpenRouter
     expect(plan.hint).toContain("OPENAI_API_KEY");
   });
 
-  test("gpt-5 (bare) with only OPENAI_API_KEY → openai-codex skipped if no codex creds", () => {
+  test("gpt-5 (bare) with only OPENAI_API_KEY → openai-codex skipped if no codex creds", async () => {
     // OPENAI_API_KEY is listed as an alias on openai-codex in provider-definitions.ts,
     // but routing requires the codex-specific credential (OPENAI_CODEX_API_KEY or
     // ~/.claudish/codex-oauth.json) — without that the codex /v1/responses
@@ -475,41 +484,41 @@ describe("route()", () => {
     if (existsSync(codexOauth)) return;
 
     process.env.OPENAI_API_KEY = "sk-openai-test";
-    const plan = route("gpt-5", DEFAULT_ROUTING_RULES);
+    const plan = await route("gpt-5", DEFAULT_ROUTING_RULES);
     expect(plan.kind).toBe("ok");
     if (plan.kind !== "ok") return;
     expect(plan.primary.provider).toBe("openai");
   });
 
-  test("gpt-5 (bare) with OPENAI_CODEX_API_KEY → primary openai-codex", () => {
+  test("gpt-5 (bare) with OPENAI_CODEX_API_KEY → primary openai-codex", async () => {
     process.env.OPENAI_CODEX_API_KEY = "sk-codex-test";
-    const plan = route("gpt-5", DEFAULT_ROUTING_RULES);
+    const plan = await route("gpt-5", DEFAULT_ROUTING_RULES);
     expect(plan.kind).toBe("ok");
     if (plan.kind !== "ok") return;
     expect(plan.primary.provider).toBe("openai-codex");
   });
 
-  test("kimi-k2.5 (bare) with KIMI_CODING_API_KEY → primary kimi-coding with rewritten model", () => {
+  test("kimi-k2.5 (bare) with KIMI_CODING_API_KEY → primary kimi-coding with rewritten model", async () => {
     process.env.KIMI_CODING_API_KEY = "kc-test";
-    const plan = route("kimi-k2.5", DEFAULT_ROUTING_RULES);
+    const plan = await route("kimi-k2.5", DEFAULT_ROUTING_RULES);
     expect(plan.kind).toBe("ok");
     if (plan.kind !== "ok") return;
     expect(plan.primary.provider).toBe("kimi-coding");
     expect(plan.primary.modelSpec).toBe("kc@kimi-for-coding");
   });
 
-  test("user disables catch-all with '*' = [] → no-route for unknown bare names", () => {
+  test("user disables catch-all with '*' = [] → no-route for unknown bare names", async () => {
     const userRules: RoutingRules = mergeRoutingRules(DEFAULT_ROUTING_RULES, { "*": [] }, {});
     process.env.OPENROUTER_API_KEY = "or-test";
-    const plan = route("totally-unknown-xyz", userRules);
+    const plan = await route("totally-unknown-xyz", userRules);
     expect(plan.kind).toBe("no-route");
   });
 
-  test("ok plan returns primary plus fallbacks in order", () => {
+  test("ok plan returns primary plus fallbacks in order", async () => {
     process.env.OPENAI_CODEX_API_KEY = "cx-test";
     process.env.OPENAI_API_KEY = "oai-test";
     process.env.OPENROUTER_API_KEY = "or-test";
-    const plan = route("gpt-5", DEFAULT_ROUTING_RULES);
+    const plan = await route("gpt-5", DEFAULT_ROUTING_RULES);
     expect(plan.kind).toBe("ok");
     if (plan.kind !== "ok") return;
     expect(plan.primary.provider).toBe("openai-codex");
@@ -523,6 +532,8 @@ describe("route()", () => {
 
 describe("route() with defaultProvider", () => {
   beforeEach(() => {
+    process.env.CLAUDISH_DISABLE_OP = "1";
+    __resetSniffForTests();
     for (const key of ENV_KEYS_TO_CLEAR) {
       savedEnv[key] = process.env[key];
       delete process.env[key];
@@ -530,6 +541,8 @@ describe("route() with defaultProvider", () => {
   });
 
   afterEach(() => {
+    delete process.env.CLAUDISH_DISABLE_OP;
+    __resetSniffForTests();
     for (const key of ENV_KEYS_TO_CLEAR) {
       if (savedEnv[key] === undefined) {
         delete process.env[key];
@@ -539,37 +552,37 @@ describe("route() with defaultProvider", () => {
     }
   });
 
-  test("defaultProvider appended after matched chain when not already present", () => {
+  test("defaultProvider appended after matched chain when not already present", async () => {
     process.env.OPENAI_API_KEY = "oai-test";
     process.env.XAI_API_KEY = "xai-test";
-    const plan = route("gpt-5", { "gpt-*": ["openai"] }, "x-ai");
+    const plan = await route("gpt-5", { "gpt-*": ["openai"] }, "x-ai");
     expect(plan.kind).toBe("ok");
     if (plan.kind !== "ok") return;
     expect(plan.primary.provider).toBe("openai");
     expect(plan.fallbacks.map((r) => r.provider)).toEqual(["x-ai"]);
   });
 
-  test("defaultProvider deduped if already present in chain", () => {
+  test("defaultProvider deduped if already present in chain", async () => {
     process.env.OPENAI_API_KEY = "oai-test";
     process.env.OPENROUTER_API_KEY = "or-test";
-    const plan = route("gpt-5", { "gpt-*": ["openai", "openrouter"] }, "openrouter");
+    const plan = await route("gpt-5", { "gpt-*": ["openai", "openrouter"] }, "openrouter");
     expect(plan.kind).toBe("ok");
     if (plan.kind !== "ok") return;
     expect(plan.primary.provider).toBe("openai");
     expect(plan.fallbacks.map((r) => r.provider)).toEqual(["openrouter"]);
   });
 
-  test("defaultProvider rescues unmatched model with no rule", () => {
+  test("defaultProvider rescues unmatched model with no rule", async () => {
     process.env.OPENROUTER_API_KEY = "or-test";
-    const plan = route("totally-unknown-xyz", {}, "openrouter");
+    const plan = await route("totally-unknown-xyz", {}, "openrouter");
     expect(plan.kind).toBe("ok");
     if (plan.kind !== "ok") return;
     expect(plan.primary.provider).toBe("openrouter");
   });
 
-  test("defaultProvider rescues when matched chain has no credentialed providers", () => {
+  test("defaultProvider rescues when matched chain has no credentialed providers", async () => {
     process.env.XAI_API_KEY = "xai-test";
-    const plan = route("deepseek-r1", { "deepseek-*": ["deepseek"] }, "x-ai");
+    const plan = await route("deepseek-r1", { "deepseek-*": ["deepseek"] }, "x-ai");
     expect(plan.kind).toBe("ok");
     if (plan.kind !== "ok") return;
     expect(plan.primary.provider).toBe("x-ai");
@@ -582,26 +595,26 @@ describe("route() with defaultProvider", () => {
     expect(planA).toEqual(planB);
   });
 
-  test("defaultProvider not consulted for explicit provider@model spec", () => {
+  test("defaultProvider not consulted for explicit provider@model spec", async () => {
     process.env.OPENROUTER_API_KEY = "or-test";
-    const plan = route("openrouter@gpt-5", DEFAULT_ROUTING_RULES, "xai");
+    const plan = await route("openrouter@gpt-5", DEFAULT_ROUTING_RULES, "xai");
     expect(plan.kind).toBe("ok");
     if (plan.kind !== "ok") return;
     expect(plan.primary.provider).toBe("openrouter");
     expect(plan.fallbacks).toEqual([]);
   });
 
-  test("defaultProvider shortcut (e.g. 'or') resolves to canonical for dedup", () => {
+  test("defaultProvider shortcut (e.g. 'or') resolves to canonical for dedup", async () => {
     process.env.OPENAI_API_KEY = "oai-test";
     process.env.OPENROUTER_API_KEY = "or-test";
-    const plan = route("gpt-5", { "gpt-*": ["openai", "openrouter"] }, "or");
+    const plan = await route("gpt-5", { "gpt-*": ["openai", "openrouter"] }, "or");
     expect(plan.kind).toBe("ok");
     if (plan.kind !== "ok") return;
     expect(plan.fallbacks.map((r) => r.provider)).toEqual(["openrouter"]);
   });
 
-  test("defaultProvider with no credentials → still no-route if rest of chain also lacks creds", () => {
-    const plan = route("gpt-5", { "gpt-*": ["openai"] }, "xai");
+  test("defaultProvider with no credentials → still no-route if rest of chain also lacks creds", async () => {
+    const plan = await route("gpt-5", { "gpt-*": ["openai"] }, "xai");
     expect(plan.kind).toBe("no-route");
   });
 });

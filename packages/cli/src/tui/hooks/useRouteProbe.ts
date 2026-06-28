@@ -93,123 +93,127 @@ export function useRouteProbe(config: ClaudishProfileConfig): UseRouteProbeRetur
       setProbeMode("idle");
       return;
     }
-    const plan = route(model);
-    if (plan.kind !== "ok") {
-      setProbeResults([
-        {
-          provider: "none",
-          displayName: "No routes found",
-          status: "failed",
-          error: plan.hint ?? plan.reason,
-        },
-      ]);
-      setProbeMode("done");
-      return;
-    }
-    const chain = [plan.primary, ...plan.fallbacks];
-    // Check which routing rule matched. Case-INSENSITIVE — must mirror the
-    // matching logic in matchRoutingRule (routing-rules.ts) so the probe panel
-    // doesn't lie about which rule the engine actually picked.
-    const ruleEntries = Object.entries(config.routing ?? {});
-    const modelLower = model.toLowerCase();
-    const matchedRule = ruleEntries.find(([pat]) => {
-      if (pat.toLowerCase() === modelLower) return true;
-      if (pat.includes("*")) {
-        const regex = new RegExp("^" + pat.replace(/\*/g, ".*") + "$", "i");
-        return regex.test(model);
-      }
-      return false;
-    });
-
-    const initial: ProbeEntry[] = chain.map((r) => {
-      return {
-        provider: r.provider,
-        displayName: r.displayName,
-        status: "pending",
-        hasKey: true,
-        reason: matchedRule ? `Custom rule: ${matchedRule[0]}` : "Default fallback chain",
-      };
-    });
-    setProbeResults(initial);
-    setProbeMode("running");
-
-    // Run tests sequentially — skip providers without credentials.
-    // INTENTIONAL: the loop is NOT abort-aware. Even after the user presses
-    // Esc to cancel and the state flips to idle, this loop keeps running and
-    // can transition the state back to "done" via setProbeMode("done").
-    // This preserves the baseline behavior — DO NOT add an AbortController.
-    //
-    // Each probe runs through the same lazy proxy the Providers tab uses, so
-    // OAuth providers (e.g. gemini-codeassist after `claudish login gemini`)
-    // are tested for real instead of being misreported as missing.
+    // route() is async (credential resolution may pull from 1Password); the rest
+    // of submit is already async, so the whole flow runs in one IIFE.
     (async () => {
-      // Best-effort proxy startup. If it fails we mark everything as failed
-      // with a clear error.
-      let proxyUrl: string;
-      try {
-        proxyUrl = await ensureProbeProxy();
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        setProbeResults((prev) =>
-          prev.map((e) => ({ ...e, status: "failed", error: `probe proxy: ${msg}` }))
-        );
+      const plan = await route(model);
+      if (plan.kind !== "ok") {
+        setProbeResults([
+          {
+            provider: "none",
+            displayName: "No routes found",
+            status: "failed",
+            error: plan.hint ?? plan.reason,
+          },
+        ]);
         setProbeMode("done");
         return;
       }
-
-      for (let i = 0; i < chain.length; i++) {
-        const link = chain[i]!;
-        // Mirror the static credential check from hasCredentialsForProvider —
-        // covers env, config, OAuth files. Local providers are always ready.
-        const provDef = PROVIDERS.find((p) => p.catalogName === link.provider);
-        const ready = provDef ? providerIsReady(provDef, config) : true;
-        if (!ready) {
-          setProbeResults((prev) =>
-            prev.map((e, idx) => (idx === i ? { ...e, status: "no_key" } : e))
-          );
-          continue;
+      const chain = [plan.primary, ...plan.fallbacks];
+      // Check which routing rule matched. Case-INSENSITIVE — must mirror the
+      // matching logic in matchRoutingRule (routing-rules.ts) so the probe panel
+      // doesn't lie about which rule the engine actually picked.
+      const ruleEntries = Object.entries(config.routing ?? {});
+      const modelLower = model.toLowerCase();
+      const matchedRule = ruleEntries.find(([pat]) => {
+        if (pat.toLowerCase() === modelLower) return true;
+        if (pat.includes("*")) {
+          const regex = new RegExp("^" + pat.replace(/\*/g, ".*") + "$", "i");
+          return regex.test(model);
         }
-        // Mark current as testing
-        setProbeResults((prev) =>
-          prev.map((e, idx) => (idx === i ? { ...e, status: "testing" } : e))
-        );
-        const startMs = Date.now();
-        const result = await probeProviderRoute(
-          proxyUrl,
-          {
-            provider: link.provider,
-            modelSpec: link.modelSpec,
-            // Let the proxy do the real credential resolution. The static
-            // ready-check above just gates the noisy "no key" rows.
-            hasCredentials: true,
-          },
-          15000
-        ).catch((e) => ({
-          state: "error" as const,
-          latencyMs: Date.now() - startMs,
-          errorMessage: String(e instanceof Error ? e.message : e),
-        }));
-        const ms = Date.now() - startMs;
-        const ok = result.state === "live";
-        setProbeResults((prev) =>
-          prev.map((e, idx) => {
-            if (idx === i)
-              return {
-                ...e,
-                status: ok ? ("success" as const) : ("failed" as const),
-                error: ok ? undefined : describeProbeState(result),
-                ms,
-              };
-            // After success: remaining providers with keys become "not reached",
-            // without keys stay "no_key"
-            if (idx > i && ok && e.status !== "no_key")
-              return { ...e, status: "skipped" as const };
-            return e;
-          })
-        );
-        if (ok) break;
-      }
-      setProbeMode("done");
+        return false;
+      });
+
+      const initial: ProbeEntry[] = chain.map((r) => {
+        return {
+          provider: r.provider,
+          displayName: r.displayName,
+          status: "pending",
+          hasKey: true,
+          reason: matchedRule ? `Custom rule: ${matchedRule[0]}` : "Default fallback chain",
+        };
+      });
+      setProbeResults(initial);
+      setProbeMode("running");
+
+      // Run tests sequentially — skip providers without credentials.
+      // INTENTIONAL: the loop is NOT abort-aware. Even after the user presses
+      // Esc to cancel and the state flips to idle, this loop keeps running and
+      // can transition the state back to "done" via setProbeMode("done").
+      // This preserves the baseline behavior — DO NOT add an AbortController.
+      //
+      // Each probe runs through the same lazy proxy the Providers tab uses, so
+      // OAuth providers (e.g. gemini-codeassist after `claudish login gemini`)
+      // are tested for real instead of being misreported as missing.
+      (async () => {
+        // Best-effort proxy startup. If it fails we mark everything as failed
+        // with a clear error.
+        let proxyUrl: string;
+        try {
+          proxyUrl = await ensureProbeProxy();
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          setProbeResults((prev) =>
+            prev.map((e) => ({ ...e, status: "failed", error: `probe proxy: ${msg}` }))
+          );
+          setProbeMode("done");
+          return;
+        }
+
+        for (let i = 0; i < chain.length; i++) {
+          const link = chain[i]!;
+          // Mirror the static credential check from hasCredentialsForProvider —
+          // covers env, config, OAuth files. Local providers are always ready.
+          const provDef = PROVIDERS.find((p) => p.catalogName === link.provider);
+          const ready = provDef ? providerIsReady(provDef, config) : true;
+          if (!ready) {
+            setProbeResults((prev) =>
+              prev.map((e, idx) => (idx === i ? { ...e, status: "no_key" } : e))
+            );
+            continue;
+          }
+          // Mark current as testing
+          setProbeResults((prev) =>
+            prev.map((e, idx) => (idx === i ? { ...e, status: "testing" } : e))
+          );
+          const startMs = Date.now();
+          const result = await probeProviderRoute(
+            proxyUrl,
+            {
+              provider: link.provider,
+              modelSpec: link.modelSpec,
+              // Let the proxy do the real credential resolution. The static
+              // ready-check above just gates the noisy "no key" rows.
+              hasCredentials: true,
+            },
+            15000
+          ).catch((e) => ({
+            state: "error" as const,
+            latencyMs: Date.now() - startMs,
+            errorMessage: String(e instanceof Error ? e.message : e),
+          }));
+          const ms = Date.now() - startMs;
+          const ok = result.state === "live";
+          setProbeResults((prev) =>
+            prev.map((e, idx) => {
+              if (idx === i)
+                return {
+                  ...e,
+                  status: ok ? ("success" as const) : ("failed" as const),
+                  error: ok ? undefined : describeProbeState(result),
+                  ms,
+                };
+              // After success: remaining providers with keys become "not reached",
+              // without keys stay "no_key"
+              if (idx > i && ok && e.status !== "no_key")
+                return { ...e, status: "skipped" as const };
+              return e;
+            })
+          );
+          if (ok) break;
+        }
+        setProbeMode("done");
+      })();
     })();
   }, [config, probeModel]);
 

@@ -1,6 +1,15 @@
 import type { ChildProcess } from "node:child_process";
 import { spawn } from "node:child_process";
-import { writeFileSync, unlinkSync, mkdirSync, existsSync, readFileSync } from "node:fs";
+import {
+  writeFileSync,
+  unlinkSync,
+  mkdirSync,
+  existsSync,
+  readFileSync,
+  openSync,
+  closeSync,
+} from "node:fs";
+import { isatty } from "node:tty";
 import { tmpdir, homedir } from "node:os";
 import { join, basename } from "node:path";
 import { ENV } from "./config.js";
@@ -428,11 +437,76 @@ export async function runClaudeWithProxy(
   // prompt readline that would otherwise race the child for stdin (#85/88/99).
   setClaudeCodeRunning(true);
 
+  // stdio selection.
+  //
+  // Normally we inherit claudish's own fds. But claudish decides interactive
+  // mode from ARGS (no positional prompt, no --stdin), independent of TTY
+  // state — whereas Claude Code decides interactive-vs-print from whether its
+  // STDOUT is a TTY ("non-interactive mode ... when stdout is not a TTY, e.g.
+  // piped" — claude --help). When claudish runs under a wrapper that pipes
+  // stdout/stderr but leaves stdin a TTY (notably `op run`, which pipes
+  // stdout/stderr to mask secrets), a blind `inherit` hands the child a piped
+  // fd 1 → the child self-selects --print → with no prompt it dies with
+  // "Input must be provided either through stdin or as a prompt argument when
+  // using --print". claudish's interactive INTENT and the child's interactive
+  // REALITY diverge.
+  //
+  // Fix: when we intend interactive but our own stdout is NOT a TTY while stdin
+  // STILL is (the op-run shape), open a fresh writable handle to the SAME
+  // terminal as stdin and hand it to the child as stdout+stderr, so the child
+  // sees a TTY on fd 1 and launches its real interactive UI. We cannot reuse
+  // fd 0 directly (Bun rejects the stdin fd in a stdout/stderr slot:
+  // ERR_INVALID_ARG_TYPE), and /dev/tty is detached (ENXIO) under op run — so
+  // we open "/dev/fd/0", which resolves to stdin's underlying tty and yields a
+  // distinct fd number. claudish writes nothing to its own stdout during an
+  // interactive run (logs go to stderr), so abandoning the piped fd 1 for the
+  // child loses nothing. Any failure falls back to plain "inherit".
+  let ttyFd: number | undefined;
+  const childWantsTty =
+    config.interactive && !process.stdout.isTTY && Boolean(process.stdin.isTTY);
+  if (childWantsTty) {
+    try {
+      const fd = openSync("/dev/fd/0", "r+");
+      if (isatty(fd)) {
+        ttyFd = fd;
+      } else {
+        closeSync(fd); // not actually a tty — don't use it
+      }
+    } catch {
+      ttyFd = undefined; // couldn't open a writable tty handle — fall back below
+    }
+  } else if (config.interactive && !process.stdout.isTTY && !process.stdin.isTTY) {
+    // Truly headless: interactive intent but no terminal on any stream. The
+    // child would fall into --print and emit a cryptic error; surface an
+    // actionable one instead.
+    console.error(
+      "[claudish] An interactive session was requested but no terminal is attached " +
+        "(stdin and stdout are both non-TTY). Pass a prompt argument, or use --stdin / -p " +
+        "for non-interactive mode."
+    );
+  }
+
+  const stdio: Parameters<typeof spawn>[2]["stdio"] =
+    ttyFd !== undefined ? [0, ttyFd, ttyFd] : "inherit";
+
   const proc = spawn(spawnCommand, claudeArgs, {
     env,
-    stdio: "inherit",
+    stdio,
     shell: needsShell,
   });
+
+  // Close our copy of the tty write fd once the child has inherited it. The
+  // child keeps its own dup, so this doesn't disturb the running session.
+  if (ttyFd !== undefined) {
+    const fdToClose = ttyFd;
+    proc.on("spawn", () => {
+      try {
+        closeSync(fdToClose);
+      } catch {
+        /* already closed */
+      }
+    });
+  }
 
   // Handle process termination signals (includes cleanup)
   setupSignalHandlers(proc, tempSettingsPath, config.quiet, onCleanup);
