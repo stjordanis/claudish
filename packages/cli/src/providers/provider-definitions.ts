@@ -681,9 +681,14 @@ export const BUILTIN_PROVIDERS: ProviderDefinition[] = [
   },
 
   // ── Sakana Fugu Subscription Plan ──────────────────────────────────
-  // Same endpoint/key as the token plan — the token-vs-subscription split
-  // lives in the user's Sakana account, not the wire. Own env var with an
-  // alias back to the shared key so a single SAKANA_API_KEY credentials both.
+  // Same endpoint as the token plan (api.sakana.ai/v1/chat/completions — the
+  // only endpoint Sakana documents), but the BILLING MODE is selected by the
+  // KEY: Sakana issues separate keys for the subscription plan vs the
+  // pay-as-you-go API. So this provider has its OWN dedicated env var with NO
+  // alias back to SAKANA_API_KEY — aliasing it caused sc@ to silently use the
+  // pay-as-you-go key and bill against prepaid credits ("Prepaid credit balance
+  // is exhausted") despite the user being on a subscription. The subscription
+  // key MUST be supplied in SAKANA_CODING_API_KEY (no fallback to the PAYG key).
   {
     name: "sakana-coding",
     displayName: "Sakana Fugu Subscription",
@@ -693,7 +698,6 @@ export const BUILTIN_PROVIDERS: ProviderDefinition[] = [
     baseUrlEnvVars: ["SAKANA_BASE_URL"],
     apiPath: "/v1/chat/completions",
     apiKeyEnvVar: "SAKANA_CODING_API_KEY",
-    apiKeyAliases: ["SAKANA_API_KEY"],
     apiKeyDescription: "Sakana Fugu Subscription API Key",
     apiKeyUrl: "https://console.sakana.ai/get-started",
     shortcuts: ["sc"],

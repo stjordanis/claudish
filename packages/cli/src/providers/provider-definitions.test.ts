@@ -85,6 +85,23 @@ describe("BUILTIN_PROVIDERS structural integrity", () => {
     expect(directNames).toContain("glm");
     expect(directNames).toContain("openrouter");
   });
+
+  // REGRESSION: the Sakana SUBSCRIPTION plan (sc@ / sakana-coding) bills against
+  // a SEPARATE key from the pay-as-you-go API (sakana / SAKANA_API_KEY). It must
+  // NOT alias back to SAKANA_API_KEY — doing so made sc@ silently use the PAYG
+  // key and bill prepaid credits ("Prepaid credit balance is exhausted") despite
+  // an active subscription. Mirrors the kimi-coding / minimax-coding pattern
+  // (own key, no PAYG alias).
+  test("sakana-coding (subscription) does NOT alias the pay-as-you-go SAKANA_API_KEY", () => {
+    const sub = BUILTIN_PROVIDERS.find((d) => d.name === "sakana-coding");
+    expect(sub).toBeDefined();
+    expect(sub!.apiKeyEnvVar).toBe("SAKANA_CODING_API_KEY");
+    // The dangerous alias must be gone.
+    expect(sub!.apiKeyAliases ?? []).not.toContain("SAKANA_API_KEY");
+    // Sibling coding/subscription plans also keep their key isolated from PAYG.
+    const kimiCoding = BUILTIN_PROVIDERS.find((d) => d.name === "kimi-coding");
+    expect(kimiCoding!.apiKeyAliases ?? []).not.toContain("MOONSHOT_API_KEY");
+  });
 });
 
 // ---------------------------------------------------------------------------

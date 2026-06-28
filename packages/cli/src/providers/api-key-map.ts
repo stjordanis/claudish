@@ -16,7 +16,10 @@ export const API_KEY_MAP: Record<string, { envVar: string; aliases?: string[] }>
   "z-ai": { envVar: "ZAI_API_KEY" },
   deepseek: { envVar: "DEEPSEEK_API_KEY" },
   sakana: { envVar: "SAKANA_API_KEY" },
-  "sakana-coding": { envVar: "SAKANA_CODING_API_KEY", aliases: ["SAKANA_API_KEY"] },
+  // No alias to SAKANA_API_KEY — the subscription plan (sc@) bills by a SEPARATE
+  // key from the pay-as-you-go API. Aliasing made sc@ fall back to the PAYG key
+  // and bill against prepaid credits despite an active subscription.
+  "sakana-coding": { envVar: "SAKANA_CODING_API_KEY" },
   ollamacloud: { envVar: "OLLAMA_API_KEY" },
   "opencode-zen": { envVar: "OPENCODE_API_KEY" },
   "opencode-zen-go": { envVar: "OPENCODE_API_KEY" },
