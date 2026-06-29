@@ -1992,7 +1992,7 @@ ${h("ENVIRONMENT VARIABLES")}
   ${blue("ZAI_API_KEY")}                     Z.AI ${dim("(z-ai@, zai@)")}
   ${blue("DEEPSEEK_API_KEY")}                DeepSeek ${dim("(ds@)")}
   ${blue("SAKANA_API_KEY")}                  Sakana Fugu ${dim("(sakana@, fugu@)")}
-  ${blue("SAKANA_CODING_API_KEY")}           Sakana Fugu Subscription ${dim("(sc@; separate subscription key)")}
+  ${blue("SAKANA_SUBSCRIPTION_API_KEY")}     Sakana Fugu Subscription ${dim("(sc@; separate subscription key)")}
   ${blue("OLLAMA_API_KEY")}                  OllamaCloud ${dim("(oc@, llama@)")}
   ${blue("OPENCODE_API_KEY")}                OpenCode Zen ${dim("(zen@; optional - free models work without it)")}
   ${blue("POE_API_KEY")}                     Poe ${dim("(poe@)")}

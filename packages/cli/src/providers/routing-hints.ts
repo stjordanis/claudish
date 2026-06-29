@@ -28,7 +28,7 @@ const PROVIDER_HINT_MAP: Record<string, ProviderHintInfo> = {
   "glm-coding": { apiKeyEnvVar: "GLM_CODING_API_KEY" },
   deepseek: { apiKeyEnvVar: "DEEPSEEK_API_KEY" },
   sakana: { apiKeyEnvVar: "SAKANA_API_KEY" },
-  "sakana-coding": { apiKeyEnvVar: "SAKANA_CODING_API_KEY" },
+  "sakana-subscription": { apiKeyEnvVar: "SAKANA_SUBSCRIPTION_API_KEY" },
   ollamacloud: { apiKeyEnvVar: "OLLAMA_API_KEY" },
   "native-anthropic": { apiKeyEnvVar: "ANTHROPIC_API_KEY" },
   openrouter: { apiKeyEnvVar: "OPENROUTER_API_KEY" },

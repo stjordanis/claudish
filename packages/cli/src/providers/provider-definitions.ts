@@ -681,27 +681,32 @@ export const BUILTIN_PROVIDERS: ProviderDefinition[] = [
   },
 
   // ── Sakana Fugu Subscription Plan ──────────────────────────────────
+  // A general-purpose subscription (NOT coding-specific) — usable for any task.
   // Same endpoint as the API/token plan (api.sakana.ai — the only endpoint
   // Sakana exposes), but the BILLING MODE is fixed at KEY CREATION: the Sakana
   // console lets you mint a key as either a "subscription" key or an "API usage"
   // (pay-as-you-go) key. They are GENUINELY DIFFERENT keys — a PAYG key draws
   // from prepaid credits, a subscription key from the monthly plan allowance —
-  // so this provider has its OWN env var (SAKANA_CODING_API_KEY) with NO alias
-  // back to SAKANA_API_KEY. Aliasing caused sc@ to fall back to the PAYG key and
-  // bill prepaid credits ("Prepaid credit balance is exhausted") despite an
-  // active subscription. Mirrors the kimi-coding / minimax-coding split: own
-  // key, no PAYG fallback. (Sakana's public API reference shows only one
+  // so this provider has its OWN env var (SAKANA_SUBSCRIPTION_API_KEY) with NO
+  // alias back to SAKANA_API_KEY. Aliasing caused sc@ to fall back to the PAYG
+  // key and bill prepaid credits ("Prepaid credit balance is exhausted") despite
+  // an active subscription. (Sakana's public API reference shows only one
   // SAKANA_API_KEY because the wire is identical; the subscription-vs-API
   // distinction lives in the key, set at creation in the console.)
   {
-    name: "sakana-coding",
+    name: "sakana-subscription",
     displayName: "Sakana Fugu Subscription",
     transport: "openai",
     tokenStrategy: "delta-aware",
     baseUrl: "https://api.sakana.ai",
     baseUrlEnvVars: ["SAKANA_BASE_URL"],
     apiPath: "/v1/chat/completions",
-    apiKeyEnvVar: "SAKANA_CODING_API_KEY",
+    // Primary env var matches Sakana's own term ("subscription"). The old
+    // SAKANA_CODING_API_KEY is kept only as a back-compat alias. NEITHER aliases
+    // the API-usage SAKANA_API_KEY — that's the PAYG key and would bill prepaid
+    // credits.
+    apiKeyEnvVar: "SAKANA_SUBSCRIPTION_API_KEY",
+    apiKeyAliases: ["SAKANA_CODING_API_KEY"],
     apiKeyDescription: "Sakana Fugu Subscription API Key",
     apiKeyUrl: "https://console.sakana.ai/get-started",
     shortcuts: ["sc"],

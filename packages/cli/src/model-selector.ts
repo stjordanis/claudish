@@ -90,7 +90,7 @@ export const pickerProviderToFirebaseSlug: Record<string, string> = {
   "glm-coding": "z-ai",
   "z-ai": "z-ai",
   sakana: "sakana",
-  "sakana-coding": "sakana",
+  "sakana-subscription": "sakana",
   zen: "opencode-zen",
   "opencode-zen": "opencode-zen",
   "opencode-zen-go": "opencode-zen-go",
@@ -483,8 +483,8 @@ const PROVIDER_FILTER_ALIASES: Record<string, string> = {
   deepseek: "deepseek",
   sakana: "sakana",
   fugu: "sakana",
-  "sakana-coding": "sakana-coding",
-  sc: "sakana-coding",
+  "sakana-subscription": "sakana-subscription",
+  sc: "sakana-subscription",
 };
 
 /**
@@ -769,9 +769,9 @@ const ALL_PROVIDER_CHOICES: Array<{
   { name: "Sakana Fugu", value: "sakana", description: "Direct API", provider: "sakana" },
   {
     name: "Sakana Fugu Subscription",
-    value: "sakana-coding",
+    value: "sakana-subscription",
     description: "Subscription plan",
-    provider: "sakana-coding",
+    provider: "sakana-subscription",
   },
   { name: "MiniMax", value: "minimax", description: "Direct API", provider: "minimax" },
   {
@@ -860,7 +860,7 @@ const PROVIDER_MODEL_PREFIX: Record<string, string> = {
   "x-ai": "x-ai@",
   deepseek: "ds@",
   sakana: "sakana@",
-  "sakana-coding": "sc@",
+  "sakana-subscription": "sc@",
   minimax: "mm@",
   kimi: "kimi@",
   "minimax-coding": "mmc@",

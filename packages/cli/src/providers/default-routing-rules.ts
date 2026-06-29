@@ -60,8 +60,8 @@ export const DEFAULT_ROUTING_RULES: RoutingRules = {
   // we don't claim OpenRouter carries the model; it's reachable explicitly via
   // or@sakana/fugu (catalog-resolved). The bare "fugu" id needs its own exact
   // rule because "fugu-*" only matches hyphenated names.
-  fugu: ["sakana-coding", "sakana"],
-  "fugu-*": ["sakana-coding", "sakana"],
+  fugu: ["sakana-subscription", "sakana"],
+  "fugu-*": ["sakana-subscription", "sakana"],
 
   // OpenCode Zen owns/serves a few model lines exclusively.
   // Pragmatic shim until Firebase aggregators[] coverage closes the gap.

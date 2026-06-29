@@ -86,19 +86,24 @@ describe("BUILTIN_PROVIDERS structural integrity", () => {
     expect(directNames).toContain("openrouter");
   });
 
-  // REGRESSION: the Sakana SUBSCRIPTION plan (sc@ / sakana-coding) bills against
-  // a SEPARATE key from the pay-as-you-go API (sakana / SAKANA_API_KEY). It must
+  // REGRESSION: the Sakana SUBSCRIPTION plan (sc@ / sakana-subscription) bills
+  // against a SEPARATE key from the pay-as-you-go API (sakana / SAKANA_API_KEY).
+  // Its primary env var is SAKANA_SUBSCRIPTION_API_KEY (named after Sakana's own
+  // "subscription" term, not "coding" — the plan is general-purpose). It must
   // NOT alias back to SAKANA_API_KEY — doing so made sc@ silently use the PAYG
   // key and bill prepaid credits ("Prepaid credit balance is exhausted") despite
-  // an active subscription. Mirrors the kimi-coding / minimax-coding pattern
-  // (own key, no PAYG alias).
-  test("sakana-coding (subscription) does NOT alias the pay-as-you-go SAKANA_API_KEY", () => {
-    const sub = BUILTIN_PROVIDERS.find((d) => d.name === "sakana-coding");
+  // an active subscription.
+  test("sakana-subscription uses its own key, not the pay-as-you-go SAKANA_API_KEY", () => {
+    const sub = BUILTIN_PROVIDERS.find((d) => d.name === "sakana-subscription");
     expect(sub).toBeDefined();
-    expect(sub!.apiKeyEnvVar).toBe("SAKANA_CODING_API_KEY");
-    // The dangerous alias must be gone.
+    expect(sub!.apiKeyEnvVar).toBe("SAKANA_SUBSCRIPTION_API_KEY");
+    // Old name kept only as a back-compat alias.
+    expect(sub!.apiKeyAliases ?? []).toContain("SAKANA_CODING_API_KEY");
+    // The dangerous PAYG alias must NOT be present.
     expect(sub!.apiKeyAliases ?? []).not.toContain("SAKANA_API_KEY");
-    // Sibling coding/subscription plans also keep their key isolated from PAYG.
+    // The old provider name is fully gone.
+    expect(BUILTIN_PROVIDERS.find((d) => d.name === "sakana-coding")).toBeUndefined();
+    // Sibling subscription plans also keep their key isolated from PAYG.
     const kimiCoding = BUILTIN_PROVIDERS.find((d) => d.name === "kimi-coding");
     expect(kimiCoding!.apiKeyAliases ?? []).not.toContain("MOONSHOT_API_KEY");
   });

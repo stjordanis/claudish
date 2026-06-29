@@ -38,7 +38,11 @@ let configExisted = false;
 
 // Sakana keys must be ABSENT for the missing-credential path. Snapshot + delete
 // any that happen to be set in the runner's env, restore in afterEach.
-const SAKANA_ENV_KEYS = ["SAKANA_API_KEY", "SAKANA_CODING_API_KEY"];
+const SAKANA_ENV_KEYS = [
+  "SAKANA_API_KEY",
+  "SAKANA_SUBSCRIPTION_API_KEY",
+  "SAKANA_CODING_API_KEY",
+];
 const savedEnv: Record<string, string | undefined> = {};
 
 function sandbox(config: Record<string, unknown>): void {
@@ -139,8 +143,8 @@ describe("explicit provider@model with missing credential — fail loud, no sile
 
     // Must mention the provider and the env var to set — the real cause, not
     // a generic xAI "API error".
-    expect(msg.toLowerCase()).toContain("sakana-coding");
-    expect(msg).toContain("SAKANA_CODING_API_KEY");
+    expect(msg.toLowerCase()).toContain("sakana-subscription");
+    expect(msg).toContain("SAKANA_SUBSCRIPTION_API_KEY");
     // Must NOT have masqueraded as an xAI / OpenRouter failure.
     expect(msg.toLowerCase()).not.toContain("xai");
   });
