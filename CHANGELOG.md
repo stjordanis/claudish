@@ -2,6 +2,25 @@
 
 All notable changes to [Claudish](https://github.com/MadAppGang/claudish).
 
+## [7.11.0] - 2026-06-30
+
+### New Features
+
+- unified reasoning-effort mapping across all providers — translate Claude Code's `output_config.effort` (none/minimal/low/medium/high/xhigh/max) into each provider's native reasoning knob, clamped per-model or stripped where there's no knob *(adapters)*
+
+### Bug Fixes
+
+- Codex no longer hardcodes `reasoning.effort="medium"` — it now honors the requested effort *(adapters)*
+- Sakana Fugu effort is clamped up to `high`/`xhigh` (Fugu rejects anything lower, which previously produced HTTP 400s) *(adapters)*
+- Gemini/Grok/Qwen/GLM/DeepSeek/MiniMax now read `output_config.effort` instead of only the legacy `thinking.budget_tokens` *(adapters)*
+- rename sakana-coding → sakana-subscription, use `SAKANA_SUBSCRIPTION_API_KEY` *(sakana)* ([`b78e6ea`](https://github.com/MadAppGang/claudish/commit/b78e6ea4e5512a2a90f2a6dc5f9536ec0d9b7f1d))
+- subscription (sc@) uses its own key, not the API-usage key *(sakana)* ([`84a7a95`](https://github.com/MadAppGang/claudish/commit/84a7a95854eb869e848f24b596ac5011886413a0))
+- surface provider errors + fail loud on explicit-spec missing credential *(routing)* ([`bbb448f`](https://github.com/MadAppGang/claudish/commit/bbb448f6bd6fc9e52a4506498b28a9ded1f5d13e))
+
+### Chores
+
+- clean tsc + biome — zero type/lint errors across the codebase ([`bc2ead4`](https://github.com/MadAppGang/claudish/commit/bc2ead461b354bc0fbe2296bf4433ae095cccb85))
+
 ## [7.10.0] - 2026-06-28
 
 ### Documentation
