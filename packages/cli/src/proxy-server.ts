@@ -302,6 +302,21 @@ export async function createProxyServer(
       // need no auth (e.g. zen/ free) have no apiKeyEnvVar → empty key.
       let apiKey = "";
       if (resolved.provider.apiKeyEnvVar) {
+        // HARDENING: getRequestAuth THROWS for a name the authority never
+        // registered (e.g. a runtime-renamed provider missing an alias), which
+        // would surface as an HTTP 500. Degrade to the same "no credential"
+        // path a missing key takes (null → explicit-spec routing reject → 400,
+        // or bare-name fallback) — but warn on stderr so the registration gap
+        // stays loud instead of silently masquerading as a missing key.
+        if (!credentials.get(resolved.provider.name)) {
+          console.error(
+            `[Proxy] No credential provider registered for "${resolved.provider.name}" — treating as missing credential (authority registration gap)`
+          );
+          log(
+            `[Proxy] Credential authority has no provider registered under "${resolved.provider.name}"`
+          );
+          return null;
+        }
         const auth = await credentials.getRequestAuth(resolved.provider.name, {
           model: resolved.modelName,
         });

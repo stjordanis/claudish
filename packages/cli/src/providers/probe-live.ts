@@ -18,6 +18,7 @@ export type ProbeState =
   | "auth-failed"
   | "model-not-found"
   | "rate-limited"
+  | "out-of-credit"
   | "server-error"
   | "timeout"
   | "network-error"
@@ -76,10 +77,13 @@ export interface ProbeTiming {
  */
 const OAUTH_PROVIDERS = new Set(["vertex", "gemini-codeassist"]);
 // Ask for a short paragraph so we can sample streaming throughput (tokens/sec).
-// Capped small so probes stay quick (~0.3-1s of generation for most models)
-// while still giving a stable tok/s estimate.
+// Capped to keep probes quick while leaving room for reasoning models that
+// spend hidden reasoning tokens BEFORE any visible text: at 64 tokens, models
+// like gpt-5-nano burned the whole budget on reasoning → HTTP 200 with zero
+// visible content → false FAIL. 512 leaves visible output for every model
+// verified while keeping the probe under ~1-3s of generation.
 const PROBE_PROMPT = "Count from one to twenty in words, one per line.";
-const PROBE_MAX_TOKENS = 64;
+export const PROBE_MAX_TOKENS = 512;
 
 export interface ProbeLinkInput {
   provider: string;
@@ -120,6 +124,18 @@ export async function probeLink(
         system: "You are a helpful assistant.",
         messages: [{ role: "user", content: PROBE_PROMPT }],
         max_tokens: PROBE_MAX_TOKENS,
+        // Probe-only: force MINIMAL reasoning. A probe just needs a few visible
+        // tokens to prove the link is alive — but a reasoning model (e.g.
+        // gpt-5-nano) left to its default budget spends the WHOLE probe cap on
+        // hidden reasoning before any visible text (HTTP 200, finish=length, 0
+        // chars — intermittent FAIL, ~60% in testing). "minimal" zeroes the
+        // reasoning budget → deterministic visible output in ~1s (10/10 vs the
+        // default's 2/5). The v7.11.0 effort mapping clamps "minimal" per model
+        // family and non-reasoning/non-OpenAI providers ignore output_config,
+        // so this is safe for every probe target. Real user sessions are
+        // unaffected — Claude Code builds its own output_config from the user's
+        // effort setting; this field is set ONLY here, on the probe request.
+        output_config: { effort: "minimal" },
         stream: true,
       }),
       signal: AbortSignal.timeout(timeoutMs),
@@ -222,14 +238,36 @@ async function safeReadBody(response: Response): Promise<string> {
   }
 }
 
-function classifyHttpError(status: number, body: string, latencyMs: number): ProbeResult {
+/**
+ * Pull the proxy's structured `error.upstream_status` out of a remapped error
+ * body. composed-handler remaps terminal upstream errors (401/403/terminal-429)
+ * to HTTP 400 so Claude Code surfaces them instead of silently retrying, and
+ * carries the ORIGINAL status in this field — without it the probe would bucket
+ * a remapped auth failure as a generic "error · 400".
+ */
+function extractUpstreamStatus(body: string): number | undefined {
+  if (!body) return undefined;
+  try {
+    const parsed = JSON.parse(body);
+    const status = parsed?.error?.upstream_status;
+    return typeof status === "number" ? status : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function classifyHttpError(status: number, body: string, latencyMs: number): ProbeResult {
   const lowered = body.toLowerCase();
-  if (status === 401 || status === 403) {
+  // A remapped terminal error carries the real upstream code — classify (and
+  // display) by THAT, not the proxy's 400 wrapper.
+  const upstream = status === 400 ? extractUpstreamStatus(body) : undefined;
+  if (status === 401 || status === 403 || upstream === 401 || upstream === 403) {
+    const authStatus = upstream ?? status;
     return {
       state: "auth-failed",
       latencyMs,
-      httpStatus: status,
-      errorMessage: extractErrorMessage(body) || `HTTP ${status}`,
+      httpStatus: authStatus,
+      errorMessage: extractErrorMessage(body) || `HTTP ${authStatus}`,
     };
   }
   if (status === 404 || /model[_ ]not[_ ]found|no such model|unknown model/.test(lowered)) {
@@ -248,19 +286,23 @@ function classifyHttpError(status: number, body: string, latencyMs: number): Pro
       errorMessage: extractErrorMessage(body) || "Rate limited",
     };
   }
-  // 402 Payment Required: the credential reached the provider but the
-  // account/plan can't be billed — typically an expired subscription or no
-  // credit (e.g. a lapsed Kimi Coding plan). NOT an auth bug: the request was
-  // authenticated, just not entitled. Keep the generic "error" state but, when
-  // the provider sends no message, default to a clear cause instead of a bare
-  // "HTTP 402" (the provider's own message still wins when present).
-  if (status === 402) {
+  // Out-of-credit, two wire shapes with the same meaning:
+  //  - upstream 429 remapped by the proxy: the proxy only remaps TERMINAL 429s
+  //    (quota/balance exhaustion per isTerminalError — e.g. Moonshot "suspended
+  //    due to insufficient balance", Z.AI code 1113); transient throttling 429s
+  //    pass through unremapped and stay "rate-limited" above.
+  //  - a direct 402 Payment Required (e.g. a lapsed Kimi Coding plan).
+  // NOT an auth bug: the request authenticated fine, the account just can't be
+  // billed. Distinct from "rate-limited" because the TUI treats throttling as
+  // healthy ("throttled" note) — an exhausted account must read as a failure
+  // with an honest cause instead of an opaque "error · 400".
+  if (upstream === 429 || status === 402) {
     return {
-      state: "error",
+      state: "out-of-credit",
       latencyMs,
-      httpStatus: status,
+      httpStatus: upstream ?? status,
       errorMessage:
-        extractErrorMessage(body) || "Payment required — subscription expired or no credit",
+        extractErrorMessage(body) || "Out of credit — account balance or plan exhausted",
     };
   }
   if (status >= 500) {
@@ -334,6 +376,7 @@ async function consumeProbeStream(
   let sawContent = false;
   let textChars = 0; // accumulated streamed text length (token estimate fallback)
   let reportedTokens: number | undefined; // exact count from usage, if provided
+  let stopReason: string | undefined; // last stop/finish reason seen on the stream
   let errorVerdict: StreamResult | null = null;
   let completed = false; // true when the stream closed cleanly (not deadline-truncated)
 
@@ -364,6 +407,7 @@ async function consumeProbeStream(
         }
         if (acct.textChars) textChars += acct.textChars;
         if (acct.outputTokens !== undefined) reportedTokens = acct.outputTokens;
+        if (acct.stopReason) stopReason = acct.stopReason;
       }
       if (errorVerdict) break;
     }
@@ -394,19 +438,40 @@ async function consumeProbeStream(
     return { state: "live", ttftMs, tokens, truncated: !completed };
   }
 
+  // Contentless 200: distinguish token-budget exhaustion from a genuinely dead
+  // stream. Reasoning models can burn the whole probe budget on hidden
+  // reasoning — the stream signals it either with an explicit truncation stop
+  // reason ("max_tokens"/"length", anthropic passthrough) or with usage that
+  // consumed the full cap (openai-sse always reports end_turn but forwards
+  // real usage). A self-explaining message beats a bare "stream ended without
+  // content" for what is really a budget artifact, not a dead link.
+  const truncationReason =
+    stopReason === "max_tokens" || stopReason === "length" ? stopReason : undefined;
+  if (truncationReason || (reportedTokens !== undefined && reportedTokens >= PROBE_MAX_TOKENS)) {
+    const cause = truncationReason
+      ? `finish: ${truncationReason}`
+      : `${reportedTokens} tokens consumed, none visible`;
+    return {
+      state: "error",
+      errorMessage: `no visible output within probe budget (${cause})`,
+    };
+  }
+
   return { state: "error", errorMessage: "stream ended without content" };
 }
 
 /**
  * Token-accounting view of one SSE event (Claude `/v1/messages` format — the
  * proxy normalizes every provider to this). Returns whether the event carried
- * a content delta (for TTFT), how much text it added (token estimate), and any
- * exact `output_tokens` usage figure if the provider reported one.
+ * a content delta (for TTFT), how much text it added (token estimate), any
+ * exact `output_tokens` usage figure, and any stop/finish reason the provider
+ * reported (used to explain contentless budget-truncated streams).
  */
 function accountStreamEvent(rawEvent: string): {
   contentDelta: boolean;
   textChars: number;
   outputTokens?: number;
+  stopReason?: string;
 } {
   let dataPayload = "";
   for (const line of rawEvent.split("\n")) {
@@ -443,10 +508,17 @@ function accountStreamEvent(rawEvent: string): {
     parsed?.message?.usage?.output_tokens ??
     parsed?.usage?.completion_tokens;
 
+  // Claude message_delta carries delta.stop_reason; OpenAI-shaped streams put
+  // finish_reason on the choice.
+  const stopReason =
+    parsed?.delta?.stop_reason ??
+    (Array.isArray(parsed?.choices) ? parsed.choices[0]?.finish_reason : undefined);
+
   return {
     contentDelta,
     textChars,
     outputTokens: typeof outputTokens === "number" ? outputTokens : undefined,
+    stopReason: typeof stopReason === "string" ? stopReason : undefined,
   };
 }
 
@@ -520,14 +592,22 @@ export function describeProbeState(result: ProbeResult): string {
       return `model not found · ${result.httpStatus ?? ""}${result.latencyMs ? ` · ${result.latencyMs}ms` : ""}`.trim();
     case "rate-limited":
       return `rate limited · ${result.latencyMs}ms`;
+    case "out-of-credit":
+      return `out of credit · ${result.httpStatus ?? ""}${result.latencyMs ? ` · ${result.latencyMs}ms` : ""}`.trim();
     case "server-error":
       return `server error · ${result.httpStatus ?? ""} · ${result.latencyMs}ms`;
     case "timeout":
       return `timeout · ${result.latencyMs}ms`;
     case "network-error":
       return `network error · ${result.latencyMs}ms`;
-    case "error":
-      return `error${result.httpStatus ? ` · ${result.httpStatus}` : ""}${result.latencyMs ? ` · ${result.latencyMs}ms` : ""}`;
+    case "error": {
+      // Append the specific cause when present. Without this, a contentless
+      // stream (e.g. a reasoning model that spent its whole budget before any
+      // visible text — HTTP 200, so no status code) rendered as a bare
+      // "error · Nms" with the explanatory errorMessage silently dropped.
+      const base = `error${result.httpStatus ? ` · ${result.httpStatus}` : ""}${result.latencyMs ? ` · ${result.latencyMs}ms` : ""}`;
+      return result.errorMessage ? `${base} — ${result.errorMessage}` : base;
+    }
   }
 }
 
@@ -540,6 +620,7 @@ export function isFailureState(state: ProbeState): boolean {
     state === "auth-failed" ||
     state === "model-not-found" ||
     state === "rate-limited" ||
+    state === "out-of-credit" ||
     state === "server-error" ||
     state === "timeout" ||
     state === "network-error" ||

@@ -202,9 +202,45 @@ describe("ApiKeyCredentialProvider", () => {
     const provider = new ApiKeyCredentialProvider({
       catalogName: "zen",
       envVar: "CLAUDISH_TEST_ZEN_KEY_UNSET",
-      publicKeyFallback: true,
+      publicKeyFallback: "public",
     });
     expect(await provider.isAvailable()).toBe(true);
+  });
+
+  // Regression (keyless providers unroutable): the catalog's publicKeyFallback
+  // is a KEY VALUE ("public"), not just a readiness flag. It used to be narrowed
+  // to a boolean on its way into the credential layer, so getRequestAuth
+  // returned EMPTY headers for a keyless OpenCode Zen → proxy-server rejected
+  // the route as "no credential" before the handler was ever built.
+  test("getRequestAuth() emits the publicKeyFallback string when no key resolves", async () => {
+    const provider = new ApiKeyCredentialProvider({
+      catalogName: "zen",
+      envVar: "CLAUDISH_TEST_ZEN_KEY_UNSET",
+      publicKeyFallback: "public",
+    });
+    const auth = await provider.getRequestAuth(CTX);
+    expect(auth.headers.Authorization).toBe("Bearer public");
+  });
+
+  test("a real env key wins over the publicKeyFallback", async () => {
+    process.env[ENV_VAR] = "sk-real-zen-key";
+    const provider = new ApiKeyCredentialProvider({
+      catalogName: "zen",
+      envVar: ENV_VAR,
+      publicKeyFallback: "public",
+    });
+    const auth = await provider.getRequestAuth(CTX);
+    expect(auth.headers.Authorization).toBe("Bearer sk-real-zen-key");
+  });
+
+  test("no fallback + no key → empty headers (request path rejects the route)", async () => {
+    const provider = new ApiKeyCredentialProvider({
+      catalogName: "fake",
+      envVar: "CLAUDISH_TEST_NO_KEY_UNSET",
+    });
+    const auth = await provider.getRequestAuth(CTX);
+    expect(auth.headers.Authorization).toBeUndefined();
+    expect(auth.headers["x-api-key"]).toBeUndefined();
   });
 
   test("isAvailable() is false when the oauthFallback file does not exist", async () => {
@@ -494,8 +530,13 @@ describe("CredentialAuthority.buildDefault()", () => {
     const authority = CredentialAuthority.buildDefault();
     expect(authority.get("openai-codex")?.catalogName).toBe("openai-codex");
     expect(authority.get("gemini-codeassist")?.catalogName).toBe("gemini-codeassist");
-    // google alias resolves to the same Gemini Code Assist instance
-    expect(authority.get("google")).toBe(authority.get("gemini-codeassist"));
+    // "google" is the DIRECT Gemini API credential (GEMINI_API_KEY) — its own
+    // ApiKeyCredentialProvider, NOT an alias of the Code Assist OAuth product.
+    // It is also registered under the runtime request-path rename "gemini"
+    // (toRemoteProvider), which proxy-server signs requests with.
+    expect(authority.get("google")?.catalogName).toBe("google");
+    expect(authority.get("gemini")).toBe(authority.get("google"));
+    expect(authority.get("google")).not.toBe(authority.get("gemini-codeassist"));
     expect(authority.get("kimi")?.catalogName).toBe("kimi");
     // kimi-coding is a SEPARATE credential (own endpoint + KIMI_CODING_API_KEY),
     // NOT an alias of the regular Kimi credential.
@@ -566,6 +607,36 @@ describe("CredentialAuthority.buildDefault()", () => {
       if (savedCoding === undefined) delete process.env.KIMI_CODING_API_KEY;
       else process.env.KIMI_CODING_API_KEY = savedCoding;
     }
+  });
+
+  // Regression (probe 500): the runtime request path signs with the
+  // RemoteProvider name "gemini" (toRemoteProvider renames the "google"
+  // catalog entry), but the authority only registered "google" (and that,
+  // wrongly, as a Code Assist alias) — so getRequestAuth("gemini") threw
+  // "No credential provider for gemini" → HTTP 500 on every direct-Gemini
+  // probe/request. Both names must resolve the same GEMINI_API_KEY credential.
+  test("getRequestAuth('gemini') resolves the same GEMINI_API_KEY auth as 'google'", async () => {
+    const saved = process.env.GEMINI_API_KEY;
+    try {
+      process.env.GEMINI_API_KEY = "sk-gemini-direct-123";
+      const authority = CredentialAuthority.buildDefault();
+      const viaRuntimeName = await authority.getRequestAuth("gemini", CTX);
+      const viaCatalogName = await authority.getRequestAuth("google", CTX);
+      expect(keyFromAuth(viaRuntimeName)).toBe("sk-gemini-direct-123");
+      expect(viaCatalogName).toEqual(viaRuntimeName);
+    } finally {
+      if (saved === undefined) delete process.env.GEMINI_API_KEY;
+      else process.env.GEMINI_API_KEY = saved;
+    }
+  });
+
+  // Hardening companion (proxy-server): an UNREGISTERED name must be
+  // detectable via get() WITHOUT calling getRequestAuth (which throws) — the
+  // request path uses this to degrade to the "no credential" 400 instead of
+  // surfacing a 500.
+  test("get() returns undefined for an unregistered name (no throw)", () => {
+    const authority = CredentialAuthority.buildDefault();
+    expect(authority.get("definitely-not-a-provider")).toBeUndefined();
   });
 
   // The real OAuth singletons read real credential files; we only assert the

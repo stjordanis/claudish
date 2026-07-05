@@ -18,6 +18,14 @@ export interface AnthropicErrorEnvelope {
   error: {
     type: AnthropicErrorType;
     message: string;
+    /**
+     * Original upstream HTTP status, set when the proxy REMAPS a terminal
+     * upstream error (401/403/terminal-429) to 400 so Claude Code surfaces it
+     * instead of silently retrying. Machine-readable: probe classification
+     * reads it to report the real upstream failure (e.g. "auth failed · 401")
+     * instead of the proxy's 400. Extra JSON fields are ignored by Claude Code.
+     */
+    upstream_status?: number;
   };
 }
 
@@ -47,20 +55,22 @@ export function statusToErrorType(status: number): AnthropicErrorType {
 /**
  * Create a properly formatted Anthropic error envelope.
  *
- * @param status     - HTTP status code (used to infer error type if not provided)
- * @param message    - Human-readable error message
- * @param errorType  - Override the error type (e.g., from a provider's structured error)
+ * @param status         - HTTP status code (used to infer error type if not provided)
+ * @param message        - Human-readable error message
+ * @param errorType      - Override the error type (e.g., from a provider's structured error)
+ * @param upstreamStatus - Original upstream HTTP status when this envelope remaps
+ *                         a terminal error to a different status (see interface doc)
  */
 export function wrapAnthropicError(
   status: number,
   message: string,
-  errorType?: string
+  errorType?: string,
+  upstreamStatus?: number
 ): AnthropicErrorEnvelope {
   const type = (errorType as AnthropicErrorType) || statusToErrorType(status);
-  return {
-    type: "error",
-    error: { type, message },
-  };
+  const error: AnthropicErrorEnvelope["error"] = { type, message };
+  if (upstreamStatus !== undefined) error.upstream_status = upstreamStatus;
+  return { type: "error", error };
 }
 
 /**

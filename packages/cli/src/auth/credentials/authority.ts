@@ -7,8 +7,9 @@
  * transports all consume it; the old per-entry-point env-push paths
  * (loadStoredApiKeys/hydrateOpSecrets/applyCustomEndpointOpKeys) are gone.
  * Registering a provider under multiple names (aliases) lets the catalog's
- * alternate slugs (e.g. "google" → the Gemini Code Assist credential) resolve
- * to the same instance.
+ * alternate slugs and the runtime request-path names (e.g. "gemini" — the
+ * RemoteProvider rename of the "google" catalog entry) resolve to the same
+ * instance.
  */
 
 import { BUILTIN_PROVIDERS } from "../../providers/provider-definitions.js";
@@ -23,6 +24,18 @@ import { VertexCredentialProvider } from "./vertex-credential.js";
 
 /** Built-in local provider names that get a LocalCredentialProvider. */
 const LOCAL_PROVIDER_NAMES = ["ollama", "lmstudio", "vllm", "mlx"];
+
+/**
+ * Runtime request-path aliases. toRemoteProvider() (provider-definitions.ts)
+ * renames some catalog providers before the request path sees them — e.g.
+ * "google" → "gemini" — and proxy-server signs requests with that RUNTIME name
+ * (credentials.getRequestAuth(resolved.provider.name)). The credential must
+ * resolve under both names or the request path 500s on a name the authority
+ * never registered.
+ */
+const RUNTIME_NAME_ALIASES: Record<string, string[]> = {
+  google: ["gemini"],
+};
 
 export class CredentialAuthority {
   private registry = new Map<string, CredentialProvider>();
@@ -114,7 +127,12 @@ export class CredentialAuthority {
 
     // Explicitly-handled providers (OAuth / composite / ADC / local / native).
     authority.register(makeCodexCredential(), ["openai-codex"]);
-    authority.register(new GeminiCodeAssistCredentialProvider(), ["gemini-codeassist", "google"]);
+    // Code Assist OAuth is its OWN product. It must NOT own the "google" name:
+    // "google" is the DIRECT Gemini API (GEMINI_API_KEY), whose credential is
+    // registered by the generic loop below under both "google" and its runtime
+    // request-path name "gemini". Aliasing "google" here made a GEMINI_API_KEY-
+    // only user look uncredentialed and left "gemini" unregistered (probe 500).
+    authority.register(new GeminiCodeAssistCredentialProvider(), ["gemini-codeassist"]);
     authority.register(makeKimiCredential(), ["kimi"]);
     // kimi-coding is a SEPARATE product with its own endpoint + KIMI_CODING_API_KEY.
     // It must NOT alias onto the regular Kimi credential, or the coding endpoint
@@ -131,7 +149,6 @@ export class CredentialAuthority {
     const alreadyRegistered = new Set<string>([
       "openai-codex",
       "gemini-codeassist",
-      "google",
       "kimi",
       "kimi-coding",
       "vertex",
@@ -154,10 +171,13 @@ export class CredentialAuthority {
           authScheme: def.authScheme === "x-api-key" ? "x-api-key" : "bearer",
           // Mirror the readiness affordances the old isProviderAvailable oracle
           // granted, so authority.isAuthenticated() matches hasCredentialsForProvider.
-          publicKeyFallback: !!def.publicKeyFallback,
+          // publicKeyFallback carries the catalog's FALLBACK KEY STRING (e.g.
+          // "public" for OpenCode Zen) so getRequestAuth can emit it when no
+          // real key resolves — not just a readiness boolean.
+          publicKeyFallback: def.publicKeyFallback,
           oauthFallback: def.oauthFallback,
         }),
-        [def.name]
+        [def.name, ...(RUNTIME_NAME_ALIASES[def.name] ?? [])]
       );
     }
 

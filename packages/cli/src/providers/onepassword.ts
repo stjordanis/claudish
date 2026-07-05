@@ -39,6 +39,7 @@
  */
 
 import { spawnSync } from "node:child_process";
+import { addSpanMeta, beginQueuedSpan, setStartupAuthKind, traceSpan } from "../startup-trace.js";
 import { VERSION } from "../version.js";
 
 /** Matches a full `op://...` secret reference (no embedded whitespace). */
@@ -258,7 +259,7 @@ export async function discoverItemFields(
   const client = await acquireSdkClient(opts, `1Password item discovery for '${item}'`);
 
   // 1. Find the vault by title.
-  const vaults = await client.vaults.list();
+  const vaults = await traceSpan("op:vaults.list", () => client.vaults.list());
   const vaultMatches = vaults.filter((v) => v.title === vault);
   if (vaultMatches.length === 0) {
     throw new Error(
@@ -275,7 +276,7 @@ export async function discoverItemFields(
   const vaultId = vaultMatches[0].id;
 
   // 2. Find the item by title within the vault.
-  const items = await client.items.list(vaultId);
+  const items = await traceSpan("op:items.list", () => client.items.list(vaultId), { vault });
   const itemMatches = items.filter((i) => i.title === item);
   if (itemMatches.length === 0) {
     throw new Error(
@@ -297,7 +298,11 @@ export async function discoverItemFields(
   const itemId = itemMatches[0].id;
 
   // 3. Fetch the full item and map fields → DiscoveredField.
-  const full = await client.items.get(vaultId, itemId);
+  // (Item TITLES are fine in trace meta — they already appear in stderr warns.)
+  const full = await traceSpan("op:items.get", () => client.items.get(vaultId, itemId), {
+    vault,
+    item,
+  });
   const out: DiscoveredField[] = [];
   for (const field of full.fields) {
     if (typeof field.title !== "string") continue;
@@ -335,7 +340,10 @@ export async function discoverItemFieldsById(
   } = {}
 ): Promise<DiscoveredField[]> {
   const client = await acquireSdkClient(opts, `1Password item discovery for '${itemTitle}'`);
-  const full = await client.items.get(vaultId, itemId);
+  const full = await traceSpan("op:items.get", () => client.items.get(vaultId, itemId), {
+    vault: vaultTitle,
+    item: itemTitle,
+  });
   const out: DiscoveredField[] = [];
   for (const field of full.fields) {
     if (typeof field.title !== "string") continue;
@@ -366,7 +374,7 @@ export async function listVaults(
   } = {}
 ): Promise<{ id: string; title: string }[]> {
   const client = await acquireSdkClient(opts, "1Password vault listing");
-  return client.vaults.list();
+  return traceSpan("op:vaults.list", () => client.vaults.list());
 }
 
 /**
@@ -383,7 +391,7 @@ export async function listItems(
   } = {}
 ): Promise<{ id: string; title: string }[]> {
   const client = await acquireSdkClient(opts, "1Password item listing");
-  return client.items.list(vaultId);
+  return traceSpan("op:items.list", () => client.items.list(vaultId));
 }
 
 /**
@@ -507,6 +515,64 @@ export async function resolveGlobImport(
     auth: opts.auth,
     env: opts.env,
   });
+}
+
+/**
+ * Resolve a glob field-import path into ALL its valid `{ envVarName: value }`
+ * pairs — the FULL-glob variant used by op-source's shared per-glob resolution.
+ *
+ * Same pipeline as resolveGlobImport (discover ONCE → filter → batch resolve)
+ * but NON-THROWING on zero matches: `{}` is a legitimate, memoizable outcome
+ * for the lazy credential path (the old per-credential
+ * resolveGlobImportForEnvVars also returned `{}` silently there — a throw here
+ * would turn every "glob currently matches nothing" launch into a retry storm,
+ * re-running discovery once per provider). Invalid env-var names are skipped
+ * silently (callers pass a quiet warn on this path).
+ *
+ * PARTIAL-TOLERANT resolve: the value phase uses resolveSecretsPartial, so ONE
+ * unresolvable field (e.g. `tooManyMatchingFields` from a duplicate label in a
+ * section — observed in real items) doesn't sink the item's other keys; each
+ * failure is reported through `warn`. Whole-batch failures (no auth, discovery
+ * error, SDK/IPC failure) still propagate — those must NOT be memoized.
+ */
+export async function resolveGlobImportAll(
+  opPath: string,
+  opts: {
+    sdkFactory?: SdkClientFactory;
+    auth?: SdkAuth;
+    env?: NodeJS.ProcessEnv;
+    /** Override the stderr warn sink (tests capture warnings). */
+    warn?: (msg: string) => void;
+  } = {}
+): Promise<Record<string, string>> {
+  const warn = opts.warn ?? ((m: string) => console.error(m));
+  const glob = parseGlobImport(opPath);
+  const fields = await discoverItemFields(glob.vault, glob.item, {
+    sdkFactory: opts.sdkFactory,
+    auth: opts.auth,
+    env: opts.env,
+    warn,
+  });
+  const matches = filterGlobFields(fields, glob);
+
+  const refMap: Record<string, string> = {};
+  for (const m of matches) {
+    if (!m.valid) continue;
+    refMap[m.envName] = m.field.reference;
+  }
+
+  // Zero importable matches → {} (memoizable, non-throwing — see docblock).
+  if (Object.keys(refMap).length === 0) return {};
+
+  const { resolved, failures } = await resolveSecretsPartial(refMap, {
+    sdkFactory: opts.sdkFactory,
+    auth: opts.auth,
+    env: opts.env,
+  });
+  for (const f of failures) {
+    warn(`[claudish] 1Password glob field could not be resolved (skipped): ${f}`);
+  }
+  return resolved;
 }
 
 /**
@@ -870,14 +936,25 @@ export const defaultSdkClientFactory: SdkClientFactory = async (auth) => {
     // this installs a readFileSync redirect (and, cold-cache, downloads the
     // pinned WASM from the official npm registry). Zero network on npm installs
     // and on warm caches. See providers/onepassword-wasm.ts.
-    const { ensureOpWasmAvailable } = await import("./onepassword-wasm.js");
-    await ensureOpWasmAvailable();
-    const { createClient, DesktopAuth } = await import("@1password/sdk");
-    const client = await createClient({
-      auth: auth.kind === "token" ? auth.token : new DesktopAuth(auth.accountName),
-      integrationName: "claudish",
-      integrationVersion: VERSION || "1.0.0",
+    // Startup-trace: the dynamic SDK import is the ~10MB WASM load — one of the
+    // dominant cold-start costs, so it gets its own span.
+    const { createClient, DesktopAuth } = await traceSpan("op:sdk-wasm-import", async () => {
+      const { ensureOpWasmAvailable } = await import("./onepassword-wasm.js");
+      await ensureOpWasmAvailable();
+      return import("@1password/sdk");
     });
+    // Startup-trace: the DesktopAuth handshake can block on the USER clicking
+    // "Authorize" in the 1Password app — hence mayIncludeUserPrompt.
+    const client = await traceSpan(
+      "op:client-handshake",
+      () =>
+        createClient({
+          auth: auth.kind === "token" ? auth.token : new DesktopAuth(auth.accountName),
+          integrationName: "claudish",
+          integrationVersion: VERSION || "1.0.0",
+        }),
+      { mayIncludeUserPrompt: true, authKind: auth.kind }
+    );
     // The real Client structurally satisfies SdkClientLike (secrets / vaults /
     // items / environments); narrow via unknown to avoid importing SDK types here.
     return client as unknown as SdkClientLike;
@@ -936,8 +1013,25 @@ export function isTransientSdkError(err: unknown): boolean {
  * when both concurrent calls fail together).
  */
 let sdkQueue: Promise<unknown> = Promise.resolve();
-function runSdkExclusive<T>(op: () => Promise<T>): Promise<T> {
-  const run = sdkQueue.then(op, op); // run after the prior op settles (ok or not)
+function runSdkExclusive<T>(
+  op: () => Promise<T>,
+  label = "op:sdk-op",
+  meta?: Record<string, string | number | boolean>
+): Promise<T> {
+  // Startup-trace: one span per queued op recording BOTH the queue wait
+  // (enqueue → start, i.e. time spent behind other serialized SDK ops) and the
+  // execution (start → finish). A slow launch caused by queue PILE-UP shows a
+  // big waitMs; one slow IPC call shows a big execMs.
+  const span = beginQueuedSpan(label, meta);
+  const timedOp = () => {
+    span.start();
+    return op();
+  };
+  const run = sdkQueue.then(timedOp, timedOp); // run after the prior op settles (ok or not)
+  run.then(
+    () => span.end(),
+    (err) => span.end({ error: true, errorMsg: String(err).split("\n")[0].slice(0, 120) })
+  );
   // Keep the chain alive regardless of this op's outcome; swallow here so a
   // rejected op doesn't poison the queue for the next caller.
   sdkQueue = run.then(
@@ -958,17 +1052,27 @@ function sdkSleep(ms: number): Promise<void> {
  * pause briefly, and retry — up to 2 retries. Non-transient errors (auth, not
  * found, bad ref) propagate immediately. Serialization is the primary -4 fix;
  * the cache-reset + backoff retries handle a genuinely transient blip.
+ *
+ * `label` names the op in the startup trace (e.g. "tui:load-fields"). Each
+ * attempt records its own queued span ({ attempt, waitMs, execMs }); when the
+ * loop retried, the LAST attempt's span additionally gets
+ * { attempts, retried, cacheReset } so a retry storm is visible in the metrics.
  */
-export async function withSdkRetry<T>(op: () => Promise<T>): Promise<T> {
+export async function withSdkRetry<T>(op: () => Promise<T>, label = "op:sdk-op"): Promise<T> {
   const MAX_ATTEMPTS = 3;
   let lastErr: unknown;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
       // Each attempt runs exclusively — no other SDK call overlaps it.
-      return await runSdkExclusive(op);
+      const result = await runSdkExclusive(op, label, { attempt });
+      if (attempt > 1) addSpanMeta(label, { attempts: attempt, retried: true, cacheReset: true });
+      return result;
     } catch (err) {
       lastErr = err;
-      if (!isTransientSdkError(err) || attempt === MAX_ATTEMPTS) throw err;
+      if (!isTransientSdkError(err) || attempt === MAX_ATTEMPTS) {
+        if (attempt > 1) addSpanMeta(label, { attempts: attempt, retried: true, cacheReset: true });
+        throw err;
+      }
       // Transient: drop the (possibly poisoned) client + back off before retry.
       resetSdkClientCache();
       await sdkSleep(150 * attempt);
@@ -1202,32 +1306,33 @@ export async function acquireSdkClient(
       `1Password SDK auth is required for ${context}, but neither OP_SERVICE_ACCOUNT_TOKEN nor a 1Password account (OP_ACCOUNT / onepasswordAccount config) is available.`
     );
   }
+  // Startup-trace: every SDK client passes through here, so this is the single
+  // point that knows the auth kind for the metrics line ("desktop" | "token").
+  setStartupAuthKind(auth.kind);
   const sdkFactory = opts.sdkFactory ?? defaultSdkClientFactory;
   return sdkFactory(auth);
 }
 
 /**
  * Map the SDK's resolveAll() response (keyed by op:// reference) back into our
- * `{ envVarName: secret }` shape. `refs` is the original `{ envVarName: "op://..." }`
- * map so we can re-associate by reference string.
- *
- * THROWS a combined error if any requested ref failed to resolve or is missing
- * from the response.
+ * `{ envVarName: secret }` shape WITHOUT throwing: per-ref failures are
+ * collected alongside the successes. `refs` is the original
+ * `{ envVarName: "op://..." }` map so we can re-associate by reference string.
  */
-function mapSdkResolveAll(
+function mapSdkResolveAllPartial(
   refs: Record<string, string>,
   response: {
     individualResponses: Record<string, { content?: { secret: string }; error?: unknown }>;
   }
-): Record<string, string> {
+): { resolved: Record<string, string>; failures: string[] } {
   const responses = response.individualResponses ?? {};
-  const out: Record<string, string> = {};
+  const resolved: Record<string, string> = {};
   const failures: string[] = [];
 
   for (const [envVar, ref] of Object.entries(refs)) {
     const entry = responses[ref];
     if (entry?.content && typeof entry.content.secret === "string") {
-      out[envVar] = entry.content.secret;
+      resolved[envVar] = entry.content.secret;
       continue;
     }
     if (entry?.error !== undefined) {
@@ -1237,12 +1342,28 @@ function mapSdkResolveAll(
     failures.push(`${envVar} (${ref}): no value returned`);
   }
 
+  return { resolved, failures };
+}
+
+/**
+ * All-or-nothing wrapper over mapSdkResolveAllPartial: THROWS a combined error
+ * if any requested ref failed to resolve or is missing from the response.
+ * (Explicit single-ref callers want loud failure; the full-glob path uses the
+ * partial variant instead — one broken field must not sink the whole item.)
+ */
+function mapSdkResolveAll(
+  refs: Record<string, string>,
+  response: {
+    individualResponses: Record<string, { content?: { secret: string }; error?: unknown }>;
+  }
+): Record<string, string> {
+  const { resolved, failures } = mapSdkResolveAllPartial(refs, response);
   if (failures.length > 0) {
     throw new Error(
       `1Password SDK could not resolve secret reference(s):\n  ${failures.join("\n  ")}`
     );
   }
-  return out;
+  return resolved;
 }
 
 /** Best-effort stringification of an SDK ResolveReferenceError variant. */
@@ -1279,8 +1400,40 @@ export async function resolveSecrets(
   if (keys.length === 0) return {};
 
   const client = await acquireSdkClient(opts, "resolving 1Password secret reference(s)");
-  const response = await client.secrets.resolveAll(keys.map((k) => refs[k]));
+  const response = await traceSpan(
+    "op:secrets.resolveAll",
+    () => client.secrets.resolveAll(keys.map((k) => refs[k])),
+    { refs: keys.length }
+  );
   return mapSdkResolveAll(refs, response);
+}
+
+/**
+ * Like resolveSecrets, but tolerant of INDIVIDUAL reference failures: the batch
+ * result is `{ resolved, failures }` instead of all-or-nothing. Used by the
+ * full-glob path (resolveGlobImportAll), where one unresolvable field — e.g. a
+ * `tooManyMatchingFields` duplicate label inside a section — must not sink the
+ * item's other keys. The whole-BATCH failures (no auth, SDK/IPC error) still
+ * throw; only per-ref resolution errors are collected.
+ */
+export async function resolveSecretsPartial(
+  refs: Record<string, string>,
+  opts: {
+    sdkFactory?: SdkClientFactory;
+    auth?: SdkAuth;
+    env?: NodeJS.ProcessEnv;
+  } = {}
+): Promise<{ resolved: Record<string, string>; failures: string[] }> {
+  const keys = Object.keys(refs);
+  if (keys.length === 0) return { resolved: {}, failures: [] };
+
+  const client = await acquireSdkClient(opts, "resolving 1Password secret reference(s)");
+  const response = await traceSpan(
+    "op:secrets.resolveAll",
+    () => client.secrets.resolveAll(keys.map((k) => refs[k])),
+    { refs: keys.length }
+  );
+  return mapSdkResolveAllPartial(refs, response);
 }
 
 /**
@@ -1317,7 +1470,9 @@ export async function readEnvironment(
     );
   }
 
-  const { variables } = await client.environments.getVariables(id);
+  const { variables } = await traceSpan("op:environments.getVariables", () =>
+    client.environments.getVariables(id)
+  );
   if (!Array.isArray(variables) || variables.length === 0) {
     throw new Error(
       `1Password Environment '${id}' resolved to no variables. Check that the Environment ID is correct and contains entries.`

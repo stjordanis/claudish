@@ -140,16 +140,11 @@ export function providerIsReady(
   p: ProviderDef,
   config: { apiKeys?: Record<string, string>; localProviders?: string[] }
 ): boolean {
-  // Guard against a catalogName that the authority aliases onto a DIFFERENT
-  // product's credential. The direct-Gemini row has catalogName "google", but
-  // the authority registers the Gemini Code Assist OAuth credential under the
-  // "google" alias — so credentials.isAuthenticated("google") reflects Code
-  // Assist OAuth, NOT the direct API's GEMINI_API_KEY. A user who ran
-  // `claudish login gemini` (OAuth) but never set GEMINI_API_KEY would otherwise
-  // see the direct-Gemini row falsely "ready", then 401 on probe (the API-key
-  // transport has no key). The direct row is API-key-only (no oauthSlug), so for
-  // a NON-OAuth-capable provider we trust ONLY the source classifier (env / cfg
-  // / public), never the authority's OAuth-derived bool.
+  // NOTE: the authority no longer aliases "google" onto the Code Assist OAuth
+  // credential ("google"/"gemini" now resolve the direct API's GEMINI_API_KEY
+  // credential), so the historical false-"ready" hazard for the direct-Gemini
+  // row is gone at the source. This sync path still trusts only the source
+  // classifier — React render paths cannot await the authority.
   // providerAuthSource is the SYNC readiness classifier (env / cfg / oauth-file /
   // public / local). It already returns "oauth" when hasOAuthCredentials() is
   // true for an OAuth-capable provider (covers codex/gemini/kimi), and reads

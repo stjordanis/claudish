@@ -154,6 +154,21 @@ export function ProviderDetail({
           {"Key: "}
         </span>
         <span fg={C.green}>{displayKey}</span>
+        {/* Unconfigured keyed provider: name the exact env var(s) claudish
+            expects, so "Not configured" is actionable without leaving the TUI.
+            Fits here because the "From:" segment only renders when a key IS
+            set — the two never share the row. */}
+        {!hasKey && !selectedProvider.isLocal && selectedProvider.apiKeyEnvVar && (
+          <>
+            <span fg={C.dim}>{"   "}</span>
+            <span fg={C.blue} attributes={A.bold}>
+              {"Env: "}
+            </span>
+            <span fg={C.yellow}>
+              {[selectedProvider.apiKeyEnvVar, ...(selectedProvider.aliases ?? [])].join(" | ")}
+            </span>
+          </>
+        )}
         {hasKey && selectedProvider.isLocal && (
           <>
             <span fg={C.dim}>{"   "}</span>

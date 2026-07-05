@@ -15,6 +15,13 @@
  * onepassword.ts, which already wrap calls in `runSdkExclusive` (the -4 IPC
  * fix). This module adds no new concurrency.
  *
+ * GLOB SINGLE-FLIGHT: a configured glob (op://Vault/Item/**) is resolved ONCE
+ * per process — the first resolve discovers the item and batch-resolves ALL
+ * matching env vars into `resolvedCache`; every other provider's resolve is a
+ * cache pick, not a re-discovery (see resolveGlobShared). Without this, the
+ * 26-provider config-TUI startup re-ran the full discovery per provider,
+ * serialized — ~34s of redundant SDK work on a 36s launch.
+ *
  * AUTH POLICY: a multi-account / no-auth failure is surfaced as a thrown
  * `OpAuthError`. The caller chooses what to do via `onAuthFailure`:
  *   - "throw"  (default for explicit --op/--op-env flags) → propagate, hard-fail.
@@ -36,7 +43,8 @@ import {
   readOnepasswordAccount,
   saveOnepasswordAccount as saveOpConfigAccount,
 } from "../../providers/onepassword-config.js";
-import type { AccountInfo, SdkAuth } from "../../providers/onepassword.js";
+import type { AccountInfo, SdkAuth, SdkClientFactory } from "../../providers/onepassword.js";
+import { type SpanMeta, addSpanMeta, beginQueuedSpan, traceSpan } from "../../startup-trace.js";
 
 /** Thrown when no usable 1Password SDK auth can be resolved. */
 export class OpAuthError extends Error {
@@ -130,18 +138,25 @@ async function getSdkAuth(allowPrompt: boolean): Promise<SdkAuth | undefined> {
     const interactive =
       allowPrompt && Boolean(process.stdout.isTTY) && !process.argv.includes("--stdin");
     try {
-      const auth = await resolveSdkAuth({
-        configAccount: readOnepasswordAccount(),
-        interactive,
-        onNeedsPicker: async (accounts) => {
-          const chosen = await pickOnepasswordAccount(accounts);
-          if (chosen) {
-            const scope = await pickSaveScope();
-            saveAccount(chosen, scope);
-          }
-          return chosen;
-        },
-      });
+      // Startup-trace: auth resolution may run `op account list` and, for a
+      // multi-account user, an INTERACTIVE picker — hence mayIncludeUserPrompt.
+      const auth = await traceSpan(
+        "op:auth-resolve",
+        () =>
+          resolveSdkAuth({
+            configAccount: readOnepasswordAccount(),
+            interactive,
+            onNeedsPicker: async (accounts) => {
+              const chosen = await pickOnepasswordAccount(accounts);
+              if (chosen) {
+                const scope = await pickSaveScope();
+                saveAccount(chosen, scope);
+              }
+              return chosen;
+            },
+          }),
+        { mayIncludeUserPrompt: true, interactive }
+      );
       cachedSdkAuth = auth;
       sdkAuthResolved = true;
       return auth;
@@ -180,7 +195,30 @@ interface SniffedConfig {
   customEndpoints?: Record<string, unknown>;
 }
 
+/**
+ * Hermetic test seams (no mock.module — Bun's module mocks are process-global
+ * and bleed across sibling test files). When set, the config read, the SDK
+ * client construction, and the auth resolution are all answered in-memory so
+ * the resolve pipeline (single-flight glob memoization included) is testable
+ * without the real ~/.claudish/config.json, the op binary, or the SDK/WASM.
+ */
+interface OpSourceTestSeams {
+  /** Replaces the ~/.claudish/config.json read. */
+  config?: SniffedConfig;
+  /** Threaded into every onepassword.ts resolution call (fake SDK client). */
+  sdkFactory?: SdkClientFactory;
+  /** Skips getSdkAuth() entirely (no account resolution, no prompts). */
+  auth?: SdkAuth;
+}
+let testSeams: OpSourceTestSeams | undefined;
+
+/** Test-only: install (or clear, with undefined) the hermetic seams above. */
+export function __setOpSourceSeamsForTests(seams: OpSourceTestSeams | undefined): void {
+  testSeams = seams;
+}
+
 function readConfigRaw(): SniffedConfig {
+  if (testSeams?.config) return testSeams.config;
   try {
     const configPath = join(homedir(), ".claudish", "config.json");
     if (!existsSync(configPath)) return {};
@@ -261,8 +299,39 @@ export function __resetSniffForTests(): void {
 // op-source orchestration layer so the whole resolve — discovery + secrets — is
 // one critical section.)
 let opQueue: Promise<unknown> = Promise.resolve();
-function runOpExclusive<T>(op: () => Promise<T>): Promise<T> {
-  const run = opQueue.then(op, op);
+
+/** Span-meta hook handed to the op body so it can annotate its own queued span
+ *  (e.g. { globCacheHit: true } when the resolve was served from the shared
+ *  glob cache with ~0 exec). Merged into the span at end(). */
+interface OpSpanCtx {
+  addMeta(m: SpanMeta): void;
+}
+
+function runOpExclusive<T>(
+  op: (span: OpSpanCtx) => Promise<T>,
+  label = "op:resolve",
+  meta?: SpanMeta
+): Promise<T> {
+  // Startup-trace: this queue serializes the concurrent per-provider credential
+  // resolutions (config TUI / model selector resolve ~16 providers at once), so
+  // the waitMs/execMs split here is what reveals a startup queue pile-up.
+  const span = beginQueuedSpan(label, meta);
+  let extraMeta: SpanMeta = {};
+  const ctx: OpSpanCtx = {
+    addMeta(m) {
+      extraMeta = { ...extraMeta, ...m };
+    },
+  };
+  const timedOp = () => {
+    span.start();
+    return op(ctx);
+  };
+  const run = opQueue.then(timedOp, timedOp);
+  run.then(
+    () => span.end(extraMeta),
+    (err) =>
+      span.end({ ...extraMeta, error: true, errorMsg: String(err).split("\n")[0].slice(0, 120) })
+  );
   // Keep the chain alive even if this op rejects (next op still runs).
   opQueue = run.then(
     () => undefined,
@@ -273,21 +342,120 @@ function runOpExclusive<T>(op: () => Promise<T>): Promise<T> {
 
 // Per-process cache of resolved env-var values. Once a glob is discovered and an
 // env var resolved, a later provider asking for the SAME var is served from here
-// — no second SDK round-trip. This is what makes the serialized 16-provider
+// — no second SDK round-trip. This is what makes the serialized 26-provider
 // resolution cheap: the shared config glob is discovered ONCE.
 const resolvedCache = new Map<string, string>();
 
-/** Test-only: clear the resolved-value cache + the queue. */
+// ── Single-flight + full-result memoization per GLOB ─────────────────────────
+// The measured startup pathology: 26 providers each triggered a FULL glob
+// resolution (vaults.list + items.list + items.get + secrets.resolveAll, ~1-2s
+// exec each) against the SAME configured glob, serialized through the op queue
+// → ~34s of redundant re-discovery. Fix: the FIRST resolve of a glob runs ONE
+// full resolution (all matching env vars, batched) and memoizes the promise;
+// every concurrent/subsequent caller awaits that same promise and picks its
+// env vars out of the shared result. A REJECTED resolution is evicted from the
+// map so the next request retries (failures are never cached).
+const globResolutions = new Map<string, Promise<Record<string, string>>>();
+// Env-var names populated by a glob resolution — lets a later cache-served
+// resolve annotate its span with { globCacheHit: true } (observability only).
+const globResolvedVars = new Set<string>();
+
+/**
+ * Mask a glob for a trace-span label: vault + pattern kept, long item titles
+ * mid-truncated. Vault/item TITLES are allowed in spans (they already appear in
+ * stderr warnings) — this only bounds the label length; field VALUES never
+ * appear anywhere near here.
+ */
+function maskGlobForTrace(globPath: string): string {
+  const body = globPath.startsWith("op://") ? globPath.slice("op://".length) : globPath;
+  const segments = body.split("/");
+  if (segments.length < 2) return globPath.slice(0, 48);
+  const [vault, item, ...rest] = segments;
+  const maskedItem = item.length > 20 ? `${item.slice(0, 12)}…${item.slice(-4)}` : item;
+  return `op://${vault}/${maskedItem}/${rest.join("/")}`;
+}
+
+/**
+ * Resolve a glob ONCE per process (single-flight + memoized full result).
+ *
+ *  - First caller: runs the full pipeline (discover the item ONCE, batch-resolve
+ *    ALL matching env vars) inside an `op:glob-resolve(<masked glob>)` span, then
+ *    populates `resolvedCache` with EVERY resolved var so later point-of-need
+ *    resolves (post-startup, TUI) are pure cache hits.
+ *  - Concurrent/subsequent callers: await the SAME promise ({ cacheHit: true }).
+ *  - Failure: the promise is evicted from the map → the next request retries.
+ *    (An EMPTY result is a success — memoized — matching the old non-throwing
+ *    "this glob holds none of the wanted keys" semantics.)
+ */
+async function resolveGlobShared(
+  globPath: string,
+  auth: SdkAuth | undefined
+): Promise<{ resolved: Record<string, string>; cacheHit: boolean }> {
+  const existing = globResolutions.get(globPath);
+  if (existing) return { resolved: await existing, cacheHit: true };
+
+  const spanName = `op:glob-resolve(${maskGlobForTrace(globPath)})`;
+  const promise = (async () => {
+    const { resolveGlobImportAll, recordOpHydratedVars } = await import(
+      "../../providers/onepassword.js"
+    );
+    // The warn sink surfaces per-field diagnostics (duplicate titles, an
+    // unresolvable field like a `tooManyMatchingFields` duplicate label). The
+    // resolution runs ONCE per process, so these print at most once per launch.
+    const resolved = await traceSpan(spanName, () =>
+      resolveGlobImportAll(globPath, {
+        auth,
+        sdkFactory: testSeams?.sdkFactory,
+        warn: (m) => console.error(m),
+      })
+    );
+    addSpanMeta(spanName, { vars: Object.keys(resolved).length });
+    // Populate the shared value cache with EVERYTHING the glob holds, and record
+    // provenance so the TUI/--probe show "From: 1Password" for cache-served vars.
+    for (const [k, v] of Object.entries(resolved)) {
+      resolvedCache.set(k, v);
+      globResolvedVars.add(k);
+    }
+    recordOpHydratedVars(Object.keys(resolved));
+    return resolved;
+  })();
+  globResolutions.set(globPath, promise);
+  // Failed resolutions must NOT be memoized: evict so the next caller retries.
+  promise.catch(() => {
+    if (globResolutions.get(globPath) === promise) globResolutions.delete(globPath);
+  });
+  return { resolved: await promise, cacheHit: false };
+}
+
+/**
+ * Drop every memoized op resolution (resolved values, per-glob full results,
+ * and the op-source sniff). Called by the TUI after a 1Password add/edit
+ * (hydrate-on-add) so item edits are re-discovered without restarting claudish.
+ * Process-lifetime in-memory caches only — nothing on disk to clear.
+ */
+export function invalidateOpResolutionCache(): void {
+  resolvedCache.clear();
+  globResolutions.clear();
+  globResolvedVars.clear();
+  // The config just changed (e.g. FIRST-ever glob added) — re-sniff on next use.
+  sniffed = undefined;
+}
+
+/** Test-only: clear the resolved-value cache, the glob memoization + the queue. */
 export function __resetResolveCacheForTests(): void {
   resolvedCache.clear();
+  globResolutions.clear();
+  globResolvedVars.clear();
   opQueue = Promise.resolve();
 }
 
 /**
  * Resolve ONLY the requested env-var names from 1Password. The authority calls
- * this when a provider's key is missing from env/config/oauth-file. Sources
- * (config single refs, config globs, custom-endpoint op:// keys) are searched
- * for the WANTED names only — no "resolve everything" pass.
+ * this when a provider's key is missing from env/config/oauth-file. Single refs
+ * and custom-endpoint op:// keys are resolved for the WANTED names only; a
+ * config GLOB is full-resolved ONCE per process (single-flight, all matching
+ * env vars batched) and every caller picks its wanted names from that shared
+ * result — see resolveGlobShared.
  *
  * Returns `{ envVar: value }` for whatever was found (possibly empty). Never
  * mutates process.env — the caller (authority) owns the write-through mirror.
@@ -315,31 +483,42 @@ export async function resolveOpKeyForEnvVars(
   }
   if (stillWanted.size === 0) return cached;
 
-  // Everything below runs inside the serialized critical section.
-  return runOpExclusive(async () => {
+  // Everything below runs inside the serialized critical section. The span
+  // label carries the wanted env-var NAMES (names only — never values).
+  const label = `op:resolve(${[...stillWanted].sort().join(",")})`;
+  return runOpExclusive(async (span) => {
     // Re-check the cache inside the lock: a prior queued op may have resolved our
     // var while we waited (the shared-glob case — the whole point of caching).
     const out: Record<string, string> = { ...cached };
     const wantNow = new Set<string>();
+    let servedFromGlob = false;
     for (const w of stillWanted) {
       const hit = resolvedCache.get(w);
-      if (hit !== undefined) out[w] = hit;
-      else wantNow.add(w);
+      if (hit !== undefined) {
+        out[w] = hit;
+        if (globResolvedVars.has(w)) servedFromGlob = true;
+      } else {
+        wantNow.add(w);
+      }
     }
+    // Observability: this resolve was satisfied by a PRIOR caller's shared glob
+    // resolution — the span shows ~0 exec with { globCacheHit: true }.
+    if (servedFromGlob) span.addMeta({ globCacheHit: true });
     if (wantNow.size === 0) return out;
-    const resolved = await resolveOpKeyForEnvVarsInner(wantNow, opts);
+    const resolved = await resolveOpKeyForEnvVarsInner(wantNow, opts, span);
     for (const [k, v] of Object.entries(resolved)) {
       resolvedCache.set(k, v);
       out[k] = v;
     }
     return out;
-  });
+  }, label);
 }
 
 /** The actual resolution body (runs inside runOpExclusive). */
 async function resolveOpKeyForEnvVarsInner(
   wanted: Set<string>,
-  opts: { onAuthFailure?: OnAuthFailure; allowPrompt?: boolean } = {}
+  opts: { onAuthFailure?: OnAuthFailure; allowPrompt?: boolean } = {},
+  span?: OpSpanCtx
 ): Promise<Record<string, string>> {
   if (wanted.size === 0) return {};
   if (!hasOpSources()) return {};
@@ -348,22 +527,23 @@ async function resolveOpKeyForEnvVarsInner(
   const allowPrompt = opts.allowPrompt ?? false;
 
   let auth: SdkAuth | undefined;
-  try {
-    auth = await getSdkAuth(allowPrompt);
-  } catch (err) {
-    if (err instanceof OpAuthError && onAuthFailure === "skip") {
-      console.error(`[claudish] 1Password auth unavailable, skipping op:// keys: ${err.message}`);
-      return {};
+  if (testSeams?.auth) {
+    auth = testSeams.auth;
+  } else {
+    try {
+      auth = await getSdkAuth(allowPrompt);
+    } catch (err) {
+      if (err instanceof OpAuthError && onAuthFailure === "skip") {
+        console.error(`[claudish] 1Password auth unavailable, skipping op:// keys: ${err.message}`);
+        return {};
+      }
+      throw err;
     }
-    throw err;
   }
 
-  const {
-    collectConfigImports,
-    resolveSecrets,
-    resolveGlobImportForEnvVars,
-    recordOpHydratedVars,
-  } = await import("../../providers/onepassword.js");
+  const { collectConfigImports, resolveSecrets, recordOpHydratedVars } = await import(
+    "../../providers/onepassword.js"
+  );
 
   const cfg = readConfigRaw();
   const out: Record<string, string> = {};
@@ -382,24 +562,35 @@ async function resolveOpKeyForEnvVarsInner(
       if (wanted.has(envVar)) wantedRefs[envVar] = ref;
     }
     if (Object.keys(wantedRefs).length > 0) {
-      const resolved = await resolveSecrets(wantedRefs, { auth });
+      const resolved = await resolveSecrets(wantedRefs, {
+        auth,
+        sdkFactory: testSeams?.sdkFactory,
+      });
       Object.assign(out, resolved);
     }
 
-    // Globs: resolve ONLY the still-wanted names from each glob.
+    // Globs: each glob resolves ONCE per process (single-flight + memoized full
+    // result — resolveGlobShared). The first caller discovers the item ONCE and
+    // batch-resolves ALL matching env vars; this caller (and every later one)
+    // just picks its wanted names out of the shared result. 26 providers →
+    // 1 discovery + 1 batched resolveAll instead of 26 full re-discoveries.
     const stillWanted = new Set([...wanted].filter((w) => !(w in out)));
     for (const globPath of collected.globImports) {
       if (stillWanted.size === 0) break;
       try {
-        const resolved = await resolveGlobImportForEnvVars(globPath, stillWanted, {
-          auth,
-          warn: () => {},
-        });
-        for (const [k, v] of Object.entries(resolved)) {
-          out[k] = v;
-          stillWanted.delete(k);
+        const { resolved, cacheHit } = await resolveGlobShared(globPath, auth);
+        if (cacheHit) span?.addMeta({ globCacheHit: true });
+        for (const w of [...stillWanted]) {
+          const v = resolved[w];
+          if (v !== undefined) {
+            out[w] = v;
+            stillWanted.delete(w);
+          }
         }
       } catch (globErr) {
+        // NON-FATAL (startup contract): warn + skip — a bad glob must never lock
+        // the user out. The failed resolution was evicted from the memo map, so
+        // the NEXT resolve retries it.
         const m = globErr instanceof Error ? globErr.message : String(globErr);
         console.error(`[claudish] 1Password import skipped: ${m}`);
       }
@@ -418,7 +609,10 @@ async function resolveOpKeyForEnvVarsInner(
         if (wanted.has(envVar) && !(envVar in out)) customRefs[envVar] = apiKey;
       }
       if (Object.keys(customRefs).length > 0) {
-        const resolved = await resolveSecrets(customRefs, { auth });
+        const resolved = await resolveSecrets(customRefs, {
+          auth,
+          sdkFactory: testSeams?.sdkFactory,
+        });
         Object.assign(out, resolved);
       }
     }

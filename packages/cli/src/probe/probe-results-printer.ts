@@ -380,6 +380,8 @@ function shortStatusLabel(
       return `${pc.red}⊗ not found${pc.reset}`;
     case "rate-limited":
       return `${pc.red}⊗ rate-limited${pc.reset}`;
+    case "out-of-credit":
+      return `${pc.red}⊗ no credit${pc.reset}`;
     case "server-error":
       return `${pc.red}⊗ server ${probe.httpStatus ?? ""}${pc.reset}`;
     case "timeout":
@@ -388,8 +390,10 @@ function shortStatusLabel(
       return `${pc.red}⊗ network${pc.reset}`;
     case "error":
       return `${pc.red}⊗ error${probe.httpStatus ? ` ${probe.httpStatus}` : ""}${pc.reset}`;
+    default:
+      // Exhaustive over ProbeState; guards stale/foreign data at runtime.
+      return `${pc.red}⊗ unknown${pc.reset}`;
   }
-  return `${pc.red}⊗ unknown${pc.reset}`;
 }
 
 function renderBorderTop(title: string, summary: string, width: number): string {

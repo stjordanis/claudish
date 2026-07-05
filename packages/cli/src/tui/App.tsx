@@ -1,6 +1,9 @@
 /** @jsxImportSource @opentui/react */
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+// Drops op-source's memoized per-glob resolutions + resolved values after a
+// 1Password add/edit, so an edited item is re-discovered without a restart.
+import { invalidateOpResolutionCache } from "../auth/credentials/op-source.js";
 import {
   disableLocalProvider,
   enableLocalProvider,
@@ -454,8 +457,9 @@ export function App({ requestLogin }: AppProps = {}) {
           const parsed = parseGlobImport(g.value);
           // withSdkRetry: a transient desktop-IPC failure (errno -4) rebuilds the
           // client + retries once instead of surfacing a one-off error.
-          const fields = await withSdkRetry(() =>
-            discoverItemFields(parsed.vault, parsed.item, { auth })
+          const fields = await withSdkRetry(
+            () => discoverItemFields(parsed.vault, parsed.item, { auth }),
+            "tui:glob-expand"
           );
           const keys = filterGlobFields(fields, parsed)
             .filter((m) => m.valid)
@@ -587,15 +591,24 @@ export function App({ requestLogin }: AppProps = {}) {
           // Auth resolution already proved the account works.
           note = "account ok";
         } else if (entry.kind === "environment") {
-          const vars = await withSdkRetry(() => readEnvironment(entry.value, { auth }));
+          const vars = await withSdkRetry(
+            () => readEnvironment(entry.value, { auth }),
+            "tui:test-entry"
+          );
           note = `${Object.keys(vars).length} vars`;
         } else if (entry.kind === "glob" || isGlobImport(entry.value)) {
           const g = parseGlobImport(entry.value);
-          const fields = await withSdkRetry(() => discoverItemFields(g.vault, g.item, { auth }));
+          const fields = await withSdkRetry(
+            () => discoverItemFields(g.vault, g.item, { auth }),
+            "tui:test-entry"
+          );
           const matches = filterGlobFields(fields, g).filter((m) => m.valid);
           note = `${matches.length} fields`;
         } else {
-          const r = await withSdkRetry(() => resolveSecrets({ T: entry.value }, { auth }));
+          const r = await withSdkRetry(
+            () => resolveSecrets({ T: entry.value }, { auth }),
+            "tui:test-entry"
+          );
           note = maskSecret(r.T);
         }
         setOpTestResults((prev) => ({
@@ -703,7 +716,10 @@ export function App({ requestLogin }: AppProps = {}) {
             }
           };
           if (kind === "environment") {
-            const vars = await withSdkRetry(() => readEnvironment(value, { auth }));
+            const vars = await withSdkRetry(
+              () => readEnvironment(value, { auth }),
+              "tui:confirm-add"
+            );
             apply(vars);
             setStatusMsg(
               `1Password environment saved (${scope}) → ${Object.keys(vars).length} vars, ${hydrated} applied.`
@@ -711,7 +727,10 @@ export function App({ requestLogin }: AppProps = {}) {
           } else if (isGlob) {
             // resolveGlobImport returns the {envVar: value} map directly — use it
             // to BOTH confirm and hydrate (one resolution, not a separate test).
-            const resolved = await withSdkRetry(() => resolveGlobImport(value, { auth }));
+            const resolved = await withSdkRetry(
+              () => resolveGlobImport(value, { auth }),
+              "tui:confirm-add"
+            );
             apply(resolved);
             const names = Object.keys(resolved).slice(0, 3).join(", ");
             const n = Object.keys(resolved).length;
@@ -721,7 +740,10 @@ export function App({ requestLogin }: AppProps = {}) {
                 : `1Password set saved (${scope}) — but it matched no importable fields right now.`
             );
           } else {
-            const r = await withSdkRetry(() => resolveSecrets({ T: value }, { auth }));
+            const r = await withSdkRetry(
+              () => resolveSecrets({ T: value }, { auth }),
+              "tui:confirm-add"
+            );
             const name = envNameFromOpRef(value);
             if (name) apply({ [name]: r.T });
             setStatusMsg(
@@ -730,7 +752,11 @@ export function App({ requestLogin }: AppProps = {}) {
           }
           // Drop ALL cached probe handlers so the next probe rebuilds transports
           // from the newly-hydrated env, then refresh config-derived state so the
-          // Providers tab re-evaluates readiness immediately.
+          // Providers tab re-evaluates readiness immediately. Also drop op-source's
+          // memoized glob resolutions + resolved values — the config (and possibly
+          // the 1Password item itself) just changed, so the next credential resolve
+          // must re-discover instead of serving a stale full-glob result.
+          invalidateOpResolutionCache();
           invalidateProbeProxyHandlers();
           refreshConfig();
         } catch (testErr: unknown) {
@@ -768,7 +794,7 @@ export function App({ requestLogin }: AppProps = {}) {
     setMode("pick_op_vault");
     try {
       const auth = await acquireOpAuth();
-      const vaults = await withSdkRetry(() => listVaults({ auth }));
+      const vaults = await withSdkRetry(() => listVaults({ auth }), "tui:list-vaults");
       setOpVaults(vaults);
       setStatusMsg(`1Password: ${vaults.length} vault${vaults.length === 1 ? "" : "s"}.`);
     } catch (err: unknown) {
@@ -796,7 +822,7 @@ export function App({ requestLogin }: AppProps = {}) {
       setMode("pick_op_item");
       try {
         const auth = await acquireOpAuth();
-        const items = await withSdkRetry(() => listItems(vaultId, { auth }));
+        const items = await withSdkRetry(() => listItems(vaultId, { auth }), "tui:list-items");
         setOpItems(items);
         setStatusMsg(`1Password: ${items.length} item${items.length === 1 ? "" : "s"}.`);
       } catch (err: unknown) {
@@ -844,8 +870,9 @@ export function App({ requestLogin }: AppProps = {}) {
       setStatusMsg(`1Password: loading fields for '${itemTitle}'…`);
       try {
         const auth = await acquireOpAuth();
-        const fields = await withSdkRetry(() =>
-          discoverItemFieldsById(vaultId, itemId, vaultTitle, itemTitle, { auth })
+        const fields = await withSdkRetry(
+          () => discoverItemFieldsById(vaultId, itemId, vaultTitle, itemTitle, { auth }),
+          "tui:load-fields"
         );
         opFieldsCache.current.set(cacheKey, fields);
         setOpFields(fields);
@@ -873,7 +900,10 @@ export function App({ requestLogin }: AppProps = {}) {
       setStatusMsg("1Password: reading environment…");
       try {
         const auth = await acquireOpAuth();
-        const vars = await withSdkRetry(() => readEnvironment(id, { auth }));
+        const vars = await withSdkRetry(
+          () => readEnvironment(id, { auth }),
+          "tui:preview-environment"
+        );
         const names = Object.keys(vars);
         setOpEnvPreview(names);
         setStatusMsg(

@@ -393,14 +393,27 @@ describe("credential equivalence: gemini-codeassist (oauth-only)", async () => {
     state.oauthAuthed.add("gemini-codeassist");
     await assertEquivalent("gemini-codeassist", true);
   });
-  // google is an alias of the gemini-codeassist credential in the authority, and
-  // the oracle's hasOAuthCredentials("google") also reads gemini-oauth.json.
-  test("google alias, oauth present → true", async () => {
-    state.oauthAuthed.add("google");
-    // For the authority, "google" routes to the gemini-codeassist provider,
-    // whose isAuthenticated reads hasOAuthCredentials("gemini-codeassist").
-    state.oauthAuthed.add("gemini-codeassist");
+});
+
+describe("credential equivalence: google / gemini (direct API key)", async () => {
+  // "google" is the DIRECT Gemini API credential (GEMINI_API_KEY) — its own
+  // ApiKeyCredentialProvider, no longer an alias of Code Assist OAuth. It is
+  // additionally registered under "gemini", the RemoteProvider runtime rename
+  // (toRemoteProvider) the request path signs with.
+  test("no creds → false", async () => assertEquivalent("google", false));
+  test("GEMINI_API_KEY env → true (catalog name)", async () => {
+    process.env.GEMINI_API_KEY = "sk-gem-123";
     await assertEquivalent("google", true);
+  });
+  test("GEMINI_API_KEY env → true (runtime name 'gemini')", async () => {
+    process.env.GEMINI_API_KEY = "sk-gem-123";
+    await assertEquivalent("gemini", true);
+  });
+  // Code Assist OAuth must NOT make the direct API routable: the direct
+  // transport authenticates with GEMINI_API_KEY, not a Code Assist token.
+  test("Code Assist oauth alone → false for the direct API", async () => {
+    state.oauthAuthed.add("gemini-codeassist");
+    await assertEquivalent("google", false);
   });
 });
 

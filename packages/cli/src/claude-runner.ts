@@ -33,6 +33,58 @@ function hasNativeAnthropicMapping(config: ClaudishConfig): boolean {
   return models.some((m) => m && parseModelSpec(m).provider === "native-anthropic");
 }
 
+/**
+ * "Proxy mode" = claudish points Claude Code at its local proxy with a placeholder
+ * API key (see the auth block in runClaudeWithProxy). In this mode the session
+ * authenticates via ANTHROPIC_API_KEY/ANTHROPIC_AUTH_TOKEN, so a user/project/local
+ * setting of `forceLoginMethod: "claudeai"` would block it at startup.
+ *
+ * The inverse — native-Anthropic models or --monitor — uses the user's REAL claude.ai
+ * subscription credentials, so we must NOT touch their login method there.
+ */
+export function isProxyAuthMode(config: ClaudishConfig): boolean {
+  return !config.monitor && !hasNativeAnthropicMapping(config);
+}
+
+/**
+ * OS-specific path to Claude Code's *managed* settings file — the highest-precedence
+ * tier, which "cannot be overridden by anything" (not even our --settings overlay).
+ * https://code.claude.com/docs/en/settings
+ */
+function managedSettingsPath(): string {
+  if (isWindows()) {
+    return join(
+      process.env.PROGRAMDATA || "C:\\ProgramData",
+      "ClaudeCode",
+      "managed-settings.json"
+    );
+  }
+  if (process.platform === "darwin") {
+    return "/Library/Application Support/ClaudeCode/managed-settings.json";
+  }
+  return "/etc/claude-code/managed-settings.json";
+}
+
+/**
+ * Read-only check: does the OS managed-settings policy force the claude.ai login
+ * method? If so, an API-key/proxy session is blocked at startup and NOTHING claudish
+ * writes can override it. Best-effort — any read/parse failure returns false (absent).
+ */
+export function managedSettingsForcesClaudeAi(
+  readFile: typeof readFileSync = readFileSync
+): boolean {
+  try {
+    // A missing file throws ENOENT here, which the catch maps to "absent" — no separate
+    // existsSync pre-check needed (and it would bypass the injected reader in tests).
+    const raw = readFile(managedSettingsPath(), "utf-8");
+    const parsed = JSON.parse(raw as string) as { forceLoginMethod?: unknown };
+    return parsed.forceLoginMethod === "claudeai";
+  } catch {
+    // Missing/unreadable/permission-denied/garbled → treat as "no managed block we can see".
+    return false;
+  }
+}
+
 // Use process.platform directly to ensure runtime evaluation
 // (module-level constants can be inlined by bundlers at build time)
 function isWindows(): boolean {
@@ -157,7 +209,8 @@ process.stdin.on('end', () => {
  */
 function createTempSettingsFile(
   _modelDisplay: string,
-  port: string
+  port: string,
+  proxyAuthMode: boolean
 ): { path: string; statusLine: { type: string; command: string; padding: number } } {
   const homeDir = process.env.HOME || process.env.USERPROFILE || tmpdir();
   const claudishDir = join(homeDir, ".claudish");
@@ -213,10 +266,33 @@ function createTempSettingsFile(
   // outright, which removes the warning. (Verified: setting this suppresses the
   // message; users can still override via their own --settings, which is merged
   // on top of this temp file.)
-  const settings = { statusLine, disableClaudeAiConnectors: true };
+  const settings = buildClaudishSettingsOverlay(statusLine, proxyAuthMode);
 
   writeFileSync(tempPath, JSON.stringify(settings, null, 2), "utf-8");
   return { path: tempPath, statusLine };
+}
+
+/**
+ * Build the claudish `--settings` overlay object. This loads at the CLI-args precedence
+ * tier, above the user/project/local settings files, so keys here override those three.
+ *
+ * - `disableClaudeAiConnectors` suppresses the proxy-mode connector warning.
+ * - `forceLoginMethod: "console"` is added ONLY in proxy mode: the session authenticates
+ *   via the placeholder ANTHROPIC_API_KEY, and a user/project/local
+ *   `forceLoginMethod: "claudeai"` would block that at startup. In native-Anthropic /
+ *   --monitor mode we leave it out so the user's real claude.ai subscription keeps working.
+ *
+ * (The OS *managed* tier can't be overridden — that case aborts before we get here.)
+ */
+export function buildClaudishSettingsOverlay(
+  statusLine: { type: string; command: string; padding: number },
+  proxyAuthMode: boolean
+): Record<string, unknown> {
+  const settings: Record<string, unknown> = { statusLine, disableClaudeAiConnectors: true };
+  if (proxyAuthMode) {
+    settings.forceLoginMethod = "console";
+  }
+  return settings;
 }
 
 /**
@@ -234,7 +310,8 @@ function createTempSettingsFile(
 function mergeUserSettingsIfPresent(
   config: ClaudishConfig,
   tempSettingsPath: string,
-  statusLine: { type: string; command: string; padding: number }
+  statusLine: { type: string; command: string; padding: number },
+  proxyAuthMode: boolean
 ): void {
   const idx = config.claudeArgs.indexOf("--settings");
   if (idx === -1 || !config.claudeArgs[idx + 1]) {
@@ -262,6 +339,13 @@ function mergeUserSettingsIfPresent(
     // but let the user override it if they explicitly set the field.
     if (!("disableClaudeAiConnectors" in userSettings)) {
       userSettings.disableClaudeAiConnectors = true;
+    }
+
+    // In proxy mode, force the console login method so the placeholder-API-key session
+    // isn't blocked by a claude.ai-forcing user/project/local setting — unless the user's
+    // own --settings explicitly sets forceLoginMethod, in which case respect their choice.
+    if (proxyAuthMode && !("forceLoginMethod" in userSettings)) {
+      userSettings.forceLoginMethod = "console";
     }
 
     // Overwrite the temp settings file with the merged result
@@ -299,11 +383,37 @@ export async function runClaudeWithProxy(
   const portMatch = proxyUrl.match(/:(\d+)/);
   const port = portMatch ? portMatch[1] : "unknown";
 
+  // Proxy mode authenticates via the placeholder API key, so a claude.ai-forcing
+  // login policy would block the session. Compute it once, then neutralize it.
+  const proxyAuthMode = isProxyAuthMode(config);
+
+  // The OS *managed* settings tier cannot be overridden by our --settings overlay.
+  // If it forces claude.ai login while we're in proxy mode, Claude Code will refuse
+  // to start with an API key — fail fast with a clear reason instead of a confusing
+  // downstream error. (Native-Anthropic/--monitor sessions use the real subscription,
+  // so a claude.ai policy is fine there and we don't check.)
+  if (proxyAuthMode && managedSettingsForcesClaudeAi()) {
+    console.error(
+      "[claudish] Error: your organization's managed Claude Code settings force the " +
+        'claude.ai login method (forceLoginMethod: "claudeai").\n' +
+        "  claudish routes Claude Code through its local proxy using API-key auth, which " +
+        "that policy blocks at startup, and managed settings cannot be overridden.\n" +
+        "  Ask your Claude Code administrator to relax this policy, or run a native " +
+        "Anthropic model (which uses your real claude.ai subscription)."
+    );
+    onCleanup?.();
+    return 1;
+  }
+
   // Create temporary settings file with custom status line for this instance
-  const { path: tempSettingsPath, statusLine } = createTempSettingsFile(modelId ?? "default", port);
+  const { path: tempSettingsPath, statusLine } = createTempSettingsFile(
+    modelId ?? "default",
+    port,
+    proxyAuthMode
+  );
 
   // Merge user's --settings into our temp settings file if user provided one
-  mergeUserSettingsIfPresent(config, tempSettingsPath, statusLine);
+  mergeUserSettingsIfPresent(config, tempSettingsPath, statusLine, proxyAuthMode);
 
   // Build claude arguments
   const claudeArgs: string[] = [];

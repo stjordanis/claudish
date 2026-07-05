@@ -8,6 +8,52 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { resolveExplicitFlagAuth } from "./auth/credentials/op-source.js";
 import { readAllOnepasswordEnvironments } from "./providers/onepassword-config.js";
+import {
+  beginSpan,
+  finalizeStartupTrace,
+  suppressStartupTraceTerminalOutput,
+  traceSpan,
+} from "./startup-trace.js";
+
+// ── Startup-timing analytics (startup-trace.ts) ─────────────────────────────
+// Every launch appends one JSON line to ~/.claudish/startup-metrics.jsonl; a
+// >8s startup prints a one-line diagnosis; CLAUDISH_STARTUP_TRACE=1 prints the
+// full phase table. The two paths with a well-defined "ready" point (config →
+// pre-TUI-mount, run → proxy-up) finalize explicitly below; this exit hook is
+// the fallback so every OTHER launch kind (update, login, --probe, --version,
+// team, …) still writes its line at exit. Idempotent — an explicit finalize
+// wins. quiet:true → the fallback never prints the slow-start stderr line
+// (a management command's total isn't "startup"), but the opt-in table still
+// prints. MCP/serve are excluded: they run for hours, so an at-exit total is
+// process lifetime, not startup, and would pollute the metrics.
+function classifyStartupKind(): string {
+  const argv = process.argv.slice(2);
+  const first = argv.find((a) => !a.startsWith("-"));
+  if (first === "config") return "config";
+  const management = new Set([
+    "update",
+    "init",
+    "profile",
+    "telemetry",
+    "stats",
+    "providers",
+    "login",
+    "logout",
+    "quota",
+    "usage",
+  ]);
+  if ((first && management.has(first)) || argv.includes("--mcp") || first === "serve") {
+    return "other";
+  }
+  return "run";
+}
+process.on("exit", () => {
+  const argv = process.argv.slice(2);
+  const longRunningServer =
+    argv.includes("--mcp") || argv.find((a) => !a.startsWith("-")) === "serve";
+  if (longRunningServer) return;
+  finalizeStartupTrace(classifyStartupKind(), { quiet: true });
+});
 
 // The 1Password SDK-auth resolver, the multi-account picker, and the
 // config-driven hydration (loadStoredApiKeys / applyCustomEndpointOpKeys /
@@ -205,8 +251,8 @@ async function applyOpImport(): Promise<void> {
 //    those into hydrateOpSecrets() and call it ONLY from the routing paths
 //    (an allowlist), instead of resolving for every command and trying to
 //    deny-list the rest.
-await applyOpEnvironment();
-await applyOpImport();
+await traceSpan("startup:op-env-flags", () => applyOpEnvironment());
+await traceSpan("startup:op-import-flag", () => applyOpImport());
 
 // Check for MCP mode before loading heavy dependencies
 const isMcpMode = process.argv.includes("--mcp");
@@ -347,12 +393,29 @@ if (isMcpMode) {
   // process.env. This is the on-demand path (no "resolve everything" glob pass);
   // it's a zero-cost no-op when no 1Password source exists. allowOpPrompt lets
   // the (TTY) config TUI prompt for a multi-account pick if needed.
-  import("./tui/index.js").then(async (m) => {
+  //
+  // Startup-trace ORDERING: finalizeStartupTrace runs AFTER credential
+  // resolution but BEFORE startConfigTui() mounts the OpenTUI fullscreen — the
+  // slow-start line / trace table must hit stderr before the TUI owns the
+  // screen, or they'd corrupt the render buffer.
+  traceSpan("startup:tui-import", () => import("./tui/index.js")).then(async (m) => {
     const { credentials } = await import("./auth/credentials/authority.js");
     const { PROVIDERS } = await import("./tui/providers.js");
-    await Promise.all(
-      PROVIDERS.map((p) => credentials.isAvailable(p.catalogName, { allowOpPrompt: true }))
+    await traceSpan(
+      "startup:credential-resolution",
+      () =>
+        Promise.all(
+          PROVIDERS.map((p) => credentials.isAvailable(p.catalogName, { allowOpPrompt: true }))
+        ),
+      { providers: PROVIDERS.length }
     );
+    finalizeStartupTrace("config");
+    // From here the OpenTUI fullscreen owns the terminal: NO trace line may hit
+    // it (a live-printed span under CLAUDISH_STARTUP_TRACE=1 overwrites TUI
+    // rows). Spans emitted during the TUI session are still buffered and, with
+    // --debug, mirrored to the log file. The finalize table/slow-line above
+    // already printed pre-mount, so nothing user-visible is lost.
+    suppressStartupTraceTerminalOutput();
     return m.startConfigTui().catch(handlePromptExit);
   });
 } else {
@@ -364,6 +427,7 @@ if (isMcpMode) {
  * Run CLI mode
  */
 async function runCli() {
+  const endImports = beginSpan("startup:cli-imports");
   const { checkClaudeInstalled, runClaudeWithProxy } = await import("./claude-runner.js");
   const { parseArgs, getVersion } = await import("./cli.js");
   const { DEFAULT_PORT_RANGE } = await import("./config.js");
@@ -382,6 +446,7 @@ async function runCli() {
   const { createProxyServer } = await import("./proxy-server.js");
   const { checkForUpdates } = await import("./update-checker.js");
   const { warmCatalogIfNeeded } = await import("./launcher/catalog-warm.js");
+  endImports();
 
   /**
    * Read content from stdin
@@ -395,8 +460,9 @@ async function runCli() {
   }
 
   try {
-    // Parse CLI arguments
-    const cliConfig = await parseArgs(process.argv.slice(2));
+    // Parse CLI arguments (includes profile/config load; terminal flags like
+    // --version/--models/--probe exit inside — the exit-hook fallback covers them)
+    const cliConfig = await traceSpan("startup:parse-args", () => parseArgs(process.argv.slice(2)));
 
     // Team mode: run models in parallel (skip normal Claude Code path)
     if (cliConfig.team && cliConfig.team.length > 0) {
@@ -475,7 +541,11 @@ async function runCli() {
       try {
         const cfg = loadConfig();
         if (!cfg.autoApproveConfirmedAt) {
-          // First run — show one-time confirmation
+          // First run — show one-time confirmation (human wait: traced so a
+          // slow first launch is attributable to this prompt, not claudish).
+          const endConfirm = beginSpan("startup:first-run-confirm", {
+            mayIncludeUserPrompt: true,
+          });
           const { createInterface } = await import("node:readline");
           process.stderr.write(
             "\n[claudish] Auto-approve is enabled by default.\n" +
@@ -498,6 +568,7 @@ async function runCli() {
           }
           cfg.autoApproveConfirmedAt = new Date().toISOString();
           saveConfig(cfg);
+          endConfirm();
         }
       } catch {
         // Config read/write failure — proceed with default (auto-approve on)
@@ -527,11 +598,13 @@ async function runCli() {
 
     // Check for updates (only in interactive mode, skip in JSON output mode)
     if (cliConfig.interactive && !cliConfig.jsonOutput) {
-      await checkForUpdates(getVersion(), { quiet: cliConfig.quiet });
+      await traceSpan("startup:update-check", () =>
+        checkForUpdates(getVersion(), { quiet: cliConfig.quiet })
+      );
     }
 
     // Check if Claude Code is installed
-    if (!(await checkClaudeInstalled())) {
+    if (!(await traceSpan("startup:claude-detect", () => checkClaudeInstalled()))) {
       console.error("Error: Claude Code CLI not found");
       console.error("Install it from: https://claude.com/claude-code");
       console.error("");
@@ -548,8 +621,11 @@ async function runCli() {
       cliConfig.modelHaiku ||
       cliConfig.modelSubagent;
     if (cliConfig.interactive && !cliConfig.monitor && !cliConfig.model && !hasProfileTiers) {
-      cliConfig.model = (await selectModel({ freeOnly: cliConfig.freeOnly }).catch(
-        handlePromptExit
+      // Human wait (the interactive picker) + per-provider credential probes.
+      cliConfig.model = (await traceSpan(
+        "startup:model-select",
+        () => selectModel({ freeOnly: cliConfig.freeOnly }).catch(handlePromptExit),
+        { mayIncludeUserPrompt: true }
       )) as string;
       console.log(""); // Empty line after selection
     }
@@ -590,7 +666,11 @@ async function runCli() {
       //   - a missing key an op:// source supplies → resolved + written to env
       // parseArgs has already exited terminal flags, so --version etc. never
       // reach here at all (laziness preserved without an ordering chokepoint).
-      const resolutions = await validateApiKeysForModels(modelsToValidate);
+      const resolutions = await traceSpan(
+        "startup:validate-api-keys",
+        () => validateApiKeysForModels(modelsToValidate),
+        { models: modelsToValidate.filter((m) => typeof m === "string").length }
+      );
       const missingKeys = getMissingKeyResolutions(resolutions);
 
       if (missingKeys.length > 0) {
@@ -656,7 +736,8 @@ async function runCli() {
 
     // Read prompt from stdin if --stdin flag is set
     if (cliConfig.stdin) {
-      const stdinInput = await readStdin();
+      // Blocks on the PIPE producer — slow here means the caller, not claudish.
+      const stdinInput = await traceSpan("startup:stdin-read", () => readStdin());
       if (stdinInput.trim()) {
         // Prepend stdin content to claudeArgs
         cliConfig.claudeArgs = [stdinInput, ...cliConfig.claudeArgs];
@@ -672,14 +753,19 @@ async function runCli() {
     //   "warned"    — proceed with stale cache, warning already on stderr
     //   "skipped"   — local model or --models-skip-update
     //   "hard_fail" — missing cache + network failure → exit 1
-    const warmOutcome = await warmCatalogIfNeeded(cliConfig);
+    const warmOutcome = await traceSpan("startup:catalog-warm", () =>
+      warmCatalogIfNeeded(cliConfig)
+    );
     if (warmOutcome === "hard_fail") {
       process.exit(1);
     }
 
     // Find available port
     const port =
-      cliConfig.port || (await findAvailablePort(DEFAULT_PORT_RANGE.start, DEFAULT_PORT_RANGE.end));
+      cliConfig.port ||
+      (await traceSpan("startup:find-port", () =>
+        findAvailablePort(DEFAULT_PORT_RANGE.start, DEFAULT_PORT_RANGE.end)
+      ));
 
     // Start proxy server
     // explicitModel is the default/fallback model
@@ -693,20 +779,22 @@ async function runCli() {
       subagent: cliConfig.modelSubagent,
     };
 
-    const proxy = await createProxyServer(
-      port,
-      cliConfig.monitor ? undefined : cliConfig.openrouterApiKey!,
-      cliConfig.monitor ? undefined : explicitModel,
-      cliConfig.monitor,
-      cliConfig.anthropicApiKey,
-      modelMap,
-      {
-        summarizeTools: cliConfig.summarizeTools,
-        quiet: cliConfig.quiet,
-        isInteractive: cliConfig.interactive,
-        advisorModels: cliConfig.advisorModels,
-        advisorCollector: cliConfig.advisorCollector,
-      }
+    const proxy = await traceSpan("startup:proxy-start", () =>
+      createProxyServer(
+        port,
+        cliConfig.monitor ? undefined : cliConfig.openrouterApiKey!,
+        cliConfig.monitor ? undefined : explicitModel,
+        cliConfig.monitor,
+        cliConfig.anthropicApiKey,
+        modelMap,
+        {
+          summarizeTools: cliConfig.summarizeTools,
+          quiet: cliConfig.quiet,
+          isInteractive: cliConfig.interactive,
+          advisorModels: cliConfig.advisorModels,
+          advisorCollector: cliConfig.advisorCollector,
+        }
+      )
     );
 
     // Route diagnostic output to log file
@@ -717,6 +805,10 @@ async function runCli() {
     if (cliConfig.interactive) {
       setDiagOutput(diag);
     }
+
+    // Startup is "ready": the proxy is up and Claude Code launches next. Print
+    // any slow-start diagnosis BEFORE Claude Code takes over the terminal.
+    finalizeStartupTrace("run", { quiet: cliConfig.quiet });
 
     // Run Claude Code with proxy
     let exitCode = 0;

@@ -85,9 +85,13 @@ export class GrokModelDialect extends BaseAPIFormat {
 
   /**
    * Handle request preparation — map Claude Code's effort to xAI
-   * `reasoning_effort`, gated per model tier. Grok rejects the param with HTTP
-   * 400 on models that don't accept it (grok-4/grok-4-0709, non-reasoning,
-   * grok-2), so those are STRIPPED, never passed.
+   * `reasoning_effort`, gated per model via an ALLOWLIST. Grok rejects the param
+   * with HTTP 400 on models that don't accept it, and naming is NOT a reliable
+   * signal (live-verified 2026-07: grok-4.3 accepts it but grok-4.20 — same
+   * dot-decimal shape — rejects it). So we SET the param only for models known
+   * to accept it and STRIP for everything else (unknown/new models fail safe:
+   * they run without effort rather than 400 on every request). See
+   * effortToReasoningEffort.
    */
   override prepareRequest(request: any, originalRequest: any): any {
     const effort = this.resolveEffortLevel(originalRequest);
@@ -113,23 +117,32 @@ export class GrokModelDialect extends BaseAPIFormat {
 
   /**
    * Map a canonical effort level to a Grok `reasoning_effort` value, or
-   * undefined when this model accepts no reasoning_effort param (→ strip).
+   * undefined when this model does NOT accept the param (→ strip).
    *
-   * Tiers (xAI docs / research §2):
-   *  - grok-3-mini (*mini*): accepts low|high ONLY.
-   *  - grok-4.3 / grok-4-fast-reasoning / grok-4-1-fast-reasoning: none|low|medium|high.
-   *  - grok-4 / grok-4-0709 / *non-reasoning* / grok-2: NOT accepted → strip.
+   * ALLOWLIST (fail-safe): only models KNOWN to accept reasoning_effort get it.
+   * Live-verified 2026-07 against api.x.ai/v1/models — of the current chat
+   * lineup ONLY grok-4.3 accepts it; grok-build-0.1 / grok-code-fast-1,
+   * grok-4.20(-0309)(-reasoning), and every *-non-reasoning id 400 with
+   * "does not support parameter reasoningEffort". Naming is NOT a reliable
+   * signal (grok-4.20 matches grok-4.x yet rejects), so we enumerate accepting
+   * families rather than guess. legacy grok-3-mini and grok-*-fast-reasoning are
+   * kept on the allowlist (historically accepting; not in today's live list).
+   * Anything else STRIPS → an unknown/new model runs without effort instead of
+   * 400-ing every request.
    */
   private effortToReasoningEffort(effort: EffortLevel): string | undefined {
     const model = this.modelId.toLowerCase();
 
-    // Non-reasoning + original grok-4 + grok-2 reject the param entirely.
-    if (model.includes("non-reasoning") || model.includes("grok-2") || this.isOriginalGrok4()) {
-      return undefined;
+    const isMini = model.includes("mini"); // grok-3-mini (legacy): low|high
+    const isGrok43 = /grok-4\.3(\b|[-.]|$)/.test(model); // grok-4.3 (live: accepts)
+    const isFastReasoning = model.includes("fast-reasoning"); // grok-*-fast-reasoning family
+
+    if (!(isMini || isGrok43 || isFastReasoning)) {
+      return undefined; // not on the allowlist → strip
     }
 
     // grok-3-mini tier: low | high only.
-    if (model.includes("mini")) {
+    if (isMini) {
       switch (effort) {
         case "high":
         case "xhigh":
@@ -150,26 +163,9 @@ export class GrokModelDialect extends BaseAPIFormat {
         return "low";
       case "medium":
         return "medium";
-      case "high":
-      case "xhigh":
-      case "max":
-        return "high";
       default:
         return "high";
     }
-  }
-
-  /**
-   * Original grok-4 / grok-4-0709 reason automatically and 400 on the param.
-   * Matches grok-4 and grok-4-0709 but NOT grok-4.3, grok-4-fast-*,
-   * grok-4-1-fast-* (those are reasoning-capable and DO accept the param).
-   */
-  private isOriginalGrok4(): boolean {
-    const model = this.modelId.toLowerCase();
-    if (model.includes("fast") || model.includes("mini")) return false;
-    // grok-4 or grok-4-0709, but NOT grok-4.<n> (e.g. grok-4.3) — the char
-    // right after "grok-4" must not be a dot or digit.
-    return /grok-4(?![.\d])/.test(model);
   }
 
   /**

@@ -280,7 +280,7 @@ describe("Grok reasoning_effort gates", () => {
     );
   });
 
-  test("grok-4 / grok-4-0709 STRIP (param 400s)", () => {
+  test("grok-4 / grok-4-0709 STRIP (not on allowlist, param 400s)", () => {
     expect(grokEffort("grok-4", { output_config: { effort: "high" } })).toBeUndefined();
     expect(grokEffort("grok-4-0709", { output_config: { effort: "high" } })).toBeUndefined();
   });
@@ -290,6 +290,29 @@ describe("Grok reasoning_effort gates", () => {
       grokEffort("grok-4-fast-non-reasoning", { output_config: { effort: "high" } })
     ).toBeUndefined();
     expect(grokEffort("grok-2", { output_config: { effort: "high" } })).toBeUndefined();
+  });
+
+  test("allowlist: grok-build-0.1 / grok-code-fast-1 STRIP (live-verified reject the param)", () => {
+    // These matched no old deny pattern → wrongly got reasoning_effort → 400.
+    // The allowlist flip strips them (they're not a known-accepting family).
+    expect(grokEffort("grok-build-0.1", { output_config: { effort: "minimal" } })).toBeUndefined();
+    expect(grokEffort("grok-code-fast-1", { output_config: { effort: "low" } })).toBeUndefined();
+  });
+
+  test("allowlist: grok-4.20 reasoning models STRIP despite grok-4.x shape (live-verified 400)", () => {
+    // The decisive case for allowlist-over-denylist: grok-4.20 IS a reasoning
+    // model and matches dot-decimal grok-4.x, yet the live API rejects the
+    // param — only grok-4.3 accepts it. Naming can't gate this.
+    expect(grokEffort("grok-4.20", { output_config: { effort: "high" } })).toBeUndefined();
+    expect(
+      grokEffort("grok-4.20-0309-reasoning", { output_config: { effort: "high" } })
+    ).toBeUndefined();
+  });
+
+  test("allowlist: an unknown/new grok model STRIPS (fail-safe, no 400)", () => {
+    expect(
+      grokEffort("grok-9-experimental", { output_config: { effort: "high" } })
+    ).toBeUndefined();
   });
 
   test("raw thinking is always stripped", () => {

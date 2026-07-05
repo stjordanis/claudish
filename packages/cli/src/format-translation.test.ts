@@ -555,7 +555,9 @@ describe("Model Adapter Quirks", () => {
 
   test("MiniMaxModelDialect: unknown minimax model → context window 0", async () => {
     const { MiniMaxModelDialect } = await import("./adapters/minimax-model-dialect.js");
-    const adapter = new MiniMaxModelDialect("minimax-m2.5");
+    // A genuinely-unknown model (not in the catalog) has no context window.
+    // Note: minimax-m2.5 IS a known catalog alias (204800), so it can't stand in here.
+    const adapter = new MiniMaxModelDialect("minimax-does-not-exist-xyz");
     expect(adapter.getContextWindow()).toBe(0);
   });
 

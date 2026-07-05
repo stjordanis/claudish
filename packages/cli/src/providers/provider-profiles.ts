@@ -176,8 +176,10 @@ const glmProfile: ProviderProfile = {
  *   zen/  (opencode-zen):    free anonymous models + full paid access (OPENCODE_API_KEY)
  *   zgo/  (opencode-zen-go): go-plan models (glm-5, minimax-m2.5, kimi-k2.5) via zen/go/v1/
  *
- * Free anonymous models work without a key; uses "public" as fallback for consistent
- * rate-limit bucketing.
+ * Free anonymous models work without a key: the catalog's publicKeyFallback
+ * ("public") is emitted by the credential authority (ApiKeyCredentialProvider)
+ * when no real key resolves, so ctx.apiKey is always populated here — keeps
+ * rate-limit bucketing consistent without a second inline fallback.
  *
  * Model routing inside the profile:
  *   - MiniMax models  → AnthropicProviderTransport + AnthropicAPIFormat
@@ -186,7 +188,7 @@ const glmProfile: ProviderProfile = {
  */
 const openCodeZenProfile: ProviderProfile = {
   createHandler(ctx) {
-    const zenApiKey = ctx.apiKey || "public";
+    const zenApiKey = ctx.apiKey;
     const isGoProvider = ctx.provider.name === "opencode-zen-go";
 
     if (ctx.modelName.toLowerCase().includes("minimax")) {

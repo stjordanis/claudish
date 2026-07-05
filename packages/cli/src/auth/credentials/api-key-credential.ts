@@ -12,7 +12,8 @@
  * The authority is the ONLY code that pushes op:// keys into process.env.
  *
  * `isAvailable()` additionally honors two affordances the legacy oracle granted:
- *   - `publicKeyFallback`: the provider has a free/public key → always available.
+ *   - `publicKeyFallback`: the provider ships a free/public key VALUE → always
+ *     available, and `getRequestAuth()` emits that value when no real key resolves.
  *   - `oauthFallback`: a `<file>` under ~/.claudish/ — if that OAuth credential
  *     file exists, the provider is available even without an env/config/op key.
  *
@@ -36,10 +37,11 @@ export interface ApiKeyDescriptor {
   authScheme?: "bearer" | "x-api-key";
   staticHeaders?: Record<string, string>;
   /**
-   * Provider has a public/free key → always available regardless of env or
-   * config. Mirrors ProviderDefinition.publicKeyFallback.
+   * Public/free API key VALUE (e.g. "public") sent when no real key resolves —
+   * the provider is always available and getRequestAuth emits this fallback as
+   * the key. Mirrors ProviderDefinition.publicKeyFallback (same string).
    */
-  publicKeyFallback?: boolean;
+  publicKeyFallback?: string;
   /**
    * OAuth credential filename under ~/.claudish/ (e.g. "codex-oauth.json"). If
    * the file exists, the provider counts as available even with no API key.
@@ -54,7 +56,7 @@ export class ApiKeyCredentialProvider implements CredentialProvider {
   private readonly aliases: string[];
   private readonly authScheme: "bearer" | "x-api-key";
   private readonly staticHeaders: Record<string, string>;
-  private readonly publicKeyFallback: boolean;
+  private readonly publicKeyFallback?: string;
   private readonly oauthFallback?: string;
 
   /** Memoized resolved key ("" = resolved-and-empty). undefined = not yet resolved. */
@@ -68,7 +70,7 @@ export class ApiKeyCredentialProvider implements CredentialProvider {
     this.aliases = descriptor.aliases ?? [];
     this.authScheme = descriptor.authScheme ?? "bearer";
     this.staticHeaders = descriptor.staticHeaders ?? {};
-    this.publicKeyFallback = descriptor.publicKeyFallback ?? false;
+    this.publicKeyFallback = descriptor.publicKeyFallback;
     this.oauthFallback = descriptor.oauthFallback;
   }
 
@@ -159,7 +161,12 @@ export class ApiKeyCredentialProvider implements CredentialProvider {
   }
 
   async getRequestAuth(ctx: RequestAuthContext): Promise<RequestAuth> {
-    const key = await this.resolveKey({ allowOpPrompt: ctx.allowOpPrompt });
+    // A real user key always wins; the catalog's public/free fallback key only
+    // fills in when nothing resolved. Without this, a keyless publicKeyFallback
+    // provider (e.g. OpenCode Zen) returned EMPTY headers and proxy-server
+    // rejected the route as "no credential" before the handler was built.
+    const key =
+      (await this.resolveKey({ allowOpPrompt: ctx.allowOpPrompt })) || this.publicKeyFallback || "";
     let headers: Record<string, string>;
     if (this.authScheme === "x-api-key") {
       headers = { "x-api-key": key, ...this.staticHeaders };

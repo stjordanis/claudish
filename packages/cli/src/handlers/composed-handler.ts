@@ -659,7 +659,13 @@ export class ComposedHandler implements ModelHandler {
             hint,
             providerMessage: providerMsg,
           });
-          return c.json(wrapAnthropicError(400, surfaced, "invalid_request_error"), 400 as any);
+          // Carry the ORIGINAL upstream status as a structured field so
+          // machine consumers (probe classification) can tell a remapped
+          // auth failure from a genuine 400.
+          return c.json(
+            wrapAnthropicError(400, surfaced, "invalid_request_error", response.status),
+            400 as any
+          );
         }
         return c.json(
           ensureAnthropicErrorFormat(response.status, errorBody),

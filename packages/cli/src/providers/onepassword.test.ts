@@ -10,7 +10,12 @@
  * CI without 1Password installed or signed in.
  */
 
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import {
+  __configureStartupTraceForTests,
+  __getStartupSpansForTests,
+  __resetStartupTraceForTests,
+} from "../startup-trace.js";
 import {
   type AccountInfo,
   OP_REF_RE,
@@ -36,6 +41,7 @@ import {
   recordOpHydratedVars,
   resolveDesktopAccount,
   resolveGlobImport,
+  resolveGlobImportAll,
   resolveGlobImportForEnvVars,
   resolveSdkAuth,
   resolveSecrets,
@@ -976,6 +982,101 @@ describe("resolveGlobImport", () => {
   });
 });
 
+describe("resolveGlobImportAll (full-glob — op-source's shared per-glob resolution)", () => {
+  test("resolves EVERY valid match of the glob (the memoizable full result)", async () => {
+    const out = await resolveGlobImportAll(ref("*/*_API_KEY"), {
+      auth: stubAuth,
+      sdkFactory: itemSdkFactory(),
+      warn: () => {},
+    });
+    expect(Object.keys(out).sort()).toEqual(
+      [
+        "ANTHROPIC_API_KEY",
+        "GEMINI_API_KEY",
+        "KIMI_CODING_API_KEY",
+        "MINIMAX_API_KEY",
+        "MOONSHOT_API_KEY",
+        "OPENAI_API_KEY",
+        "OPENROUTER_API_KEY",
+        "XAI_API_KEY",
+        "ZHIPU_API_KEY",
+      ].sort()
+    );
+    expect(out.GEMINI_API_KEY).toBe(`sdk:${ref("GOOGLE_GEMINI_API_KEY/GEMINI_API_KEY ")}`);
+  });
+
+  test("zero matches → {} WITHOUT throwing (unlike resolveGlobImport)", async () => {
+    // The lazy-credential contract: an empty glob result is a legitimate,
+    // memoizable outcome — a throw would retry discovery once per provider.
+    const out = await resolveGlobImportAll(ref("*/NO_SUCH_*"), {
+      auth: stubAuth,
+      sdkFactory: itemSdkFactory(),
+      warn: () => {},
+    });
+    expect(out).toEqual({});
+  });
+
+  test("invalid env-name matches are skipped silently ('Bad Name' not in output)", async () => {
+    const out = await resolveGlobImportAll(ref("Open router/*"), {
+      auth: stubAuth,
+      sdkFactory: itemSdkFactory(),
+      warn: () => {},
+    });
+    expect(out.OPENROUTER_API_KEY).toBeDefined();
+    expect(out["Bad Name"]).toBeUndefined();
+  });
+
+  test("ONE unresolvable field does NOT sink the batch (real case: tooManyMatchingFields)", async () => {
+    // Observed live: a duplicate label inside a section makes the SDK reject
+    // that ONE reference with `tooManyMatchingFields`. All-or-nothing mapping
+    // made the whole full-glob batch throw → the failure was (correctly) never
+    // memoized → every provider re-ran the full discovery. Partial tolerance:
+    // the other keys resolve, the bad one is warned + skipped.
+    const warnings: string[] = [];
+    const client = makeFakeSdkClient({
+      vaults: SDK_VAULTS,
+      items: SDK_ITEMS,
+      item: SDK_ITEM,
+      resolveAll: (refs) => {
+        const individualResponses: ResolveAllResult["individualResponses"] = {};
+        for (const r of refs) {
+          individualResponses[r] = r.includes("ANTHROPIC_API_KEY")
+            ? { error: { type: "tooManyMatchingFields" } }
+            : { content: { secret: `sdk:${r}` } };
+        }
+        return { individualResponses };
+      },
+    });
+    const out = await resolveGlobImportAll(ref("*/*_API_KEY"), {
+      auth: stubAuth,
+      sdkFactory: makeFakeSdkFactory(client),
+      warn: (m) => warnings.push(m),
+    });
+    expect(out.ANTHROPIC_API_KEY).toBeUndefined();
+    expect(Object.keys(out)).toHaveLength(8); // the 9 matches minus the 1 failure
+    expect(out.OPENAI_API_KEY).toBe(`sdk:${ref("OpenAI/OPENAI_API_KEY")}`);
+    expect(
+      warnings.some((w) => w.includes("ANTHROPIC_API_KEY") && w.includes("tooManyMatchingFields"))
+    ).toBe(true);
+  });
+
+  test("a whole-batch resolveAll failure still throws (must NOT be memoized as success)", async () => {
+    const client = makeFakeSdkClient({
+      vaults: SDK_VAULTS,
+      items: SDK_ITEMS,
+      item: SDK_ITEM,
+      throwOnResolveAll: new Error("IPC operation failed: -4"),
+    });
+    expect(
+      resolveGlobImportAll(ref("*/*_API_KEY"), {
+        auth: stubAuth,
+        sdkFactory: makeFakeSdkFactory(client),
+        warn: () => {},
+      })
+    ).rejects.toThrow("IPC operation failed");
+  });
+});
+
 describe("resolveGlobImportForEnvVars (per-credential — only the wanted keys)", () => {
   test("returns ONLY the requested env var, not every field in the glob", async () => {
     // The whole-item glob advertises 9 keys, but routing only needs OPENAI_API_KEY.
@@ -1289,5 +1390,83 @@ describe("withSdkRetry", () => {
     };
     await Promise.all([withSdkRetry(op), withSdkRetry(op), withSdkRetry(op)]);
     expect(maxActive).toBe(1); // serialized — only one ran at a time
+  });
+});
+
+describe("withSdkRetry startup-trace instrumentation", () => {
+  // Hermetic: the trace is configured with a no-op stderr sink and an isolated
+  // env; no finalize is ever called, so nothing is written to disk. Uses the
+  // REAL clock (queue-wait assertions need real serialization delays).
+  beforeEach(() => {
+    __configureStartupTraceForTests({ env: {}, stderr: () => {} });
+  });
+  afterEach(() => {
+    __resetStartupTraceForTests();
+  });
+
+  test("records a queue-wait vs exec split per labeled op", async () => {
+    const slow = () => new Promise<string>((r) => setTimeout(() => r("ok"), 30));
+    // Launch both together: opB is enqueued while opA executes, so opB WAITS.
+    await Promise.all([withSdkRetry(slow, "opA"), withSdkRetry(slow, "opB")]);
+    const spans = __getStartupSpansForTests();
+    const a = spans.find((s) => s.name === "opA");
+    const b = spans.find((s) => s.name === "opB");
+    expect(a).toBeDefined();
+    expect(b).toBeDefined();
+    // Both executed for ~30ms.
+    expect(a?.meta?.execMs as number).toBeGreaterThanOrEqual(20);
+    expect(b?.meta?.execMs as number).toBeGreaterThanOrEqual(20);
+    // opA ran immediately; opB sat in the queue behind it (~30ms wait).
+    expect(a?.meta?.waitMs as number).toBeLessThan(20);
+    expect(b?.meta?.waitMs as number).toBeGreaterThanOrEqual(20);
+    // First (only) attempt is tagged.
+    expect(a?.meta?.attempt).toBe(1);
+    expect(b?.meta?.attempt).toBe(1);
+  });
+
+  test("a transient retry lands attempt counts + cacheReset in span meta", async () => {
+    let calls = 0;
+    const out = await withSdkRetry(async () => {
+      calls++;
+      if (calls === 1) throw new Error("IPC operation failed: -4");
+      return "recovered";
+    }, "op:retry-storm");
+    expect(out).toBe("recovered");
+    const spans = __getStartupSpansForTests().filter((s) => s.name === "op:retry-storm");
+    expect(spans).toHaveLength(2); // one span per attempt
+    // Attempt 1: failed transiently — error recorded on ITS span.
+    expect(spans[0].meta?.attempt).toBe(1);
+    expect(spans[0].meta?.error).toBe(true);
+    expect(String(spans[0].meta?.errorMsg)).toContain("IPC operation failed");
+    // Attempt 2: succeeded — carries the retry summary.
+    expect(spans[1].meta?.attempt).toBe(2);
+    expect(spans[1].meta?.attempts).toBe(2);
+    expect(spans[1].meta?.retried).toBe(true);
+    expect(spans[1].meta?.cacheReset).toBe(true);
+  });
+
+  test("a non-transient failure records ONE error span, no retry meta", async () => {
+    let threw: unknown;
+    try {
+      await withSdkRetry(async () => {
+        throw new Error("vault 'X' not found");
+      }, "op:genuine-fail");
+    } catch (e) {
+      threw = e;
+    }
+    expect((threw as Error)?.message).toContain("not found");
+    const spans = __getStartupSpansForTests().filter((s) => s.name === "op:genuine-fail");
+    expect(spans).toHaveLength(1);
+    expect(spans[0].meta?.attempt).toBe(1);
+    expect(spans[0].meta?.error).toBe(true);
+    expect(spans[0].meta?.retried).toBeUndefined();
+  });
+
+  test("unlabeled calls still record under the default label", async () => {
+    await withSdkRetry(async () => "ok");
+    const spans = __getStartupSpansForTests().filter((s) => s.name === "op:sdk-op");
+    expect(spans).toHaveLength(1);
+    expect(typeof spans[0].meta?.waitMs).toBe("number");
+    expect(typeof spans[0].meta?.execMs).toBe("number");
   });
 });
