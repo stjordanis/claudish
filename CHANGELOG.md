@@ -2,6 +2,16 @@
 
 All notable changes to [Claudish](https://github.com/MadAppGang/claudish).
 
+## [7.12.0] - 2026-07-05
+
+### Documentation
+
+- update CHANGELOG.md for v7.11.0([`511da8e`](https://github.com/MadAppGang/claudish/commit/511da8eb9bed519fb6f20f2cd0ed6d8bd8d3692e))
+
+### New Features
+
+- v7.12.0 — forced-auth hardening, async credential layer, startup tracing([`69083af`](https://github.com/MadAppGang/claudish/commit/69083af1d53353de439e9aa41cf471df936fef06))
+
 ## [7.11.0] - 2026-06-30
 
 ### Bug Fixes
