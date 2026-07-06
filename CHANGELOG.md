@@ -2,6 +2,16 @@
 
 All notable changes to [Claudish](https://github.com/MadAppGang/claudish).
 
+## [7.12.1] - 2026-07-06
+
+### Documentation
+
+- update CHANGELOG.md for v7.12.0([`e2a1dae`](https://github.com/MadAppGang/claudish/commit/e2a1dae31dc7cafa02742cb50a40ee9a5bc2032d))
+
+### Other Changes
+
+- v7.12.1 — test suite cleanup (theater/implementation-test cull)([`e80c8bf`](https://github.com/MadAppGang/claudish/commit/e80c8bfed22baf6a05c02fb67ffa1d6f7c7e4826))
+
 ## [7.12.0] - 2026-07-05
 
 ### Documentation
