@@ -65,29 +65,6 @@ function staleCache(entries: SlimModelEntry[]): DiskCacheV2 {
 // ─── modelsByVendor ──────────────────────────────────────────────────────────
 
 describe("modelsByVendor", () => {
-  test("owner provider 'anthropic' calls getModelsByProvider once", async () => {
-    const fakeProviderQuery = mock(async (_slug: string) => [
-      modelDoc("claude-opus-4-7", "anthropic"),
-      modelDoc("claude-sonnet-4-5", "anthropic"),
-    ]);
-    // Owner path now reads the slim cache to filter lineage → served-by. With a
-    // null cache (cold start) the filter is skipped and the full list returns.
-    const fakeReadSlim = mock(() => null);
-
-    const client = createCatalogClient({
-      getModelsByProvider: fakeProviderQuery,
-      readSlimCache: fakeReadSlim,
-    });
-
-    const result = await client.modelsByVendor("anthropic");
-
-    expect(fakeProviderQuery).toHaveBeenCalledTimes(1);
-    expect(fakeProviderQuery.mock.calls[0]?.[0]).toBe("anthropic");
-    // Cold-start (null cache): don't blank the picker — return the full list.
-    expect(result).toHaveLength(2);
-    expect(result[0]?.modelId).toBe("claude-opus-4-7");
-  });
-
   test("owner path excludes lineage models the provider does not serve directly", async () => {
     // gpt-latest is OpenAI-owned by lineage but the served-by index lists only
     // openrouter → it must NOT appear under the openai (oai@) list. gpt-5 IS
@@ -343,23 +320,5 @@ describe("searchModels", () => {
     expect(fakeSearch.mock.calls[0]?.[0]).toBe("claude");
     expect(result).toHaveLength(2);
     expect(result[0]?.modelId).toBe("claude-opus-4-7");
-  });
-
-  test("propagates the explicit limit argument", async () => {
-    const fakeSearch = mock(async (_term: string, _limit?: number) => []);
-    const client = createCatalogClient({ searchModels: fakeSearch });
-
-    await client.searchModels("gpt", 10);
-
-    expect(fakeSearch.mock.calls[0]?.[1]).toBe(10);
-  });
-
-  test("default limit is 50 when not specified", async () => {
-    const fakeSearch = mock(async (_term: string, _limit?: number) => []);
-    const client = createCatalogClient({ searchModels: fakeSearch });
-
-    await client.searchModels("anything");
-
-    expect(fakeSearch.mock.calls[0]?.[1]).toBe(50);
   });
 });

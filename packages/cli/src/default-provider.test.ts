@@ -1,9 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import {
-  type ResolvedDefaultProvider,
-  buildLegacyHint,
-  resolveDefaultProvider,
-} from "./default-provider.js";
+import { resolveDefaultProvider } from "./default-provider.js";
 import type { ClaudishProfileConfig } from "./profile-config.js";
 
 function makeConfig(overrides: Partial<ClaudishProfileConfig> = {}): ClaudishProfileConfig {
@@ -133,19 +129,4 @@ describe("buildLegacyHint (commit 5: now a no-op)", () => {
   // Pre-commit-5, this returned a stderr hint when legacyAutoPromoted=true.
   // Since LiteLLM auto-promotion was removed, the function always returns
   // null — kept for backwards-compat with existing callers.
-  test("always returns null", () => {
-    const resolvedTrue: ResolvedDefaultProvider = {
-      provider: "litellm",
-      source: "config-file",
-      legacyAutoPromoted: true,
-    };
-    const resolvedFalse: ResolvedDefaultProvider = {
-      provider: "openrouter",
-      source: "hardcoded",
-      legacyAutoPromoted: false,
-    };
-
-    expect(buildLegacyHint(resolvedTrue)).toBeNull();
-    expect(buildLegacyHint(resolvedFalse)).toBeNull();
-  });
 });

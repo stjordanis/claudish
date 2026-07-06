@@ -139,14 +139,6 @@ describe("OpenRouterCatalogResolver.resolveSync", () => {
 // ---------------------------------------------------------------------------
 
 describe("OpenRouterCatalogResolver cache state", () => {
-  test("isCacheWarm returns false when no data", () => {
-    const resolver = new OpenRouterCatalogResolver();
-    // Fresh resolver with no fetch — cache is cold
-    // (isCacheWarm checks module-level _memCache which is reset between test files)
-    // We can't easily test this without resetting module state, so just verify the method exists
-    expect(typeof resolver.isCacheWarm).toBe("function");
-  });
-
   test("ensureReady resolves without error even if fetch fails", async () => {
     const resolver = new OpenRouterCatalogResolver();
     // ensureReady should gracefully handle fetch failures

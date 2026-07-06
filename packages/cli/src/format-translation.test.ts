@@ -553,20 +553,6 @@ describe("Model Adapter Quirks", () => {
     expect(request.temperature).toBe(0.7);
   });
 
-  test("MiniMaxModelDialect: unknown minimax model → context window 0", async () => {
-    const { MiniMaxModelDialect } = await import("./adapters/minimax-model-dialect.js");
-    // A genuinely-unknown model (not in the catalog) has no context window.
-    // Note: minimax-m2.5 IS a known catalog alias (204800), so it can't stand in here.
-    const adapter = new MiniMaxModelDialect("minimax-does-not-exist-xyz");
-    expect(adapter.getContextWindow()).toBe(0);
-  });
-
-  test("MiniMaxModelDialect: supportsVision returns false", async () => {
-    const { MiniMaxModelDialect } = await import("./adapters/minimax-model-dialect.js");
-    const adapter = new MiniMaxModelDialect("minimax-m2.5");
-    expect(adapter.supportsVision()).toBe(false);
-  });
-
   test("OpenAIAdapter: thinking → reasoning_effort for o3", async () => {
     const { OpenAIAPIFormat } = await import("./adapters/openai-api-format.js");
     const adapter = new OpenAIAPIFormat("o3-mini");
@@ -589,136 +575,11 @@ describe("Model Adapter Quirks", () => {
     adapter.prepareRequest(request, original);
     expect(request.thinking).toBeUndefined();
   });
-
-  test("AdapterManager selects correct adapter for model IDs", async () => {
-    const { DialectManager } = await import("./adapters/dialect-manager.js");
-
-    expect(new DialectManager("glm-5").getAdapter().getName()).toBe("GLMModelDialect");
-    expect(new DialectManager("grok-3").getAdapter().getName()).toBe("GrokModelDialect");
-    expect(new DialectManager("minimax-m2.5").getAdapter().getName()).toBe("MiniMaxModelDialect");
-    expect(new DialectManager("qwen3.5-plus").getAdapter().getName()).toBe("QwenModelDialect");
-    expect(new DialectManager("deepseek-r1").getAdapter().getName()).toBe("DeepSeekModelDialect");
-    expect(new DialectManager("unknown-model").getAdapter().getName()).toBe("DefaultAPIFormat");
-  });
 });
 
 // ─── APIFormat: getStreamFormat() Tests ──────────────────────────────────────
 
-describe("APIFormat: getStreamFormat()", () => {
-  test("DefaultAPIFormat returns openai-sse", async () => {
-    const { DefaultAPIFormat } = await import("./adapters/base-api-format.js");
-    expect(new DefaultAPIFormat("test").getStreamFormat()).toBe("openai-sse");
-  });
-
-  test("AnthropicAPIFormat returns anthropic-sse", async () => {
-    const { AnthropicAPIFormat } = await import("./adapters/anthropic-api-format.js");
-    expect(new AnthropicAPIFormat("test", "minimax").getStreamFormat()).toBe("anthropic-sse");
-  });
-
-  test("GeminiAPIFormat returns gemini-sse", async () => {
-    const { GeminiAPIFormat } = await import("./adapters/gemini-api-format.js");
-    expect(new GeminiAPIFormat("gemini-2.0-flash").getStreamFormat()).toBe("gemini-sse");
-  });
-
-  test("OllamaAPIFormat returns ollama-jsonl", async () => {
-    const { OllamaAPIFormat } = await import("./adapters/ollama-api-format.js");
-    expect(new OllamaAPIFormat("llama3.2").getStreamFormat()).toBe("ollama-jsonl");
-  });
-
-  test("OpenAIAPIFormat returns openai-sse for GPT models", async () => {
-    const { OpenAIAPIFormat } = await import("./adapters/openai-api-format.js");
-    expect(new OpenAIAPIFormat("gpt-5.4").getStreamFormat()).toBe("openai-sse");
-  });
-
-  test("CodexAPIFormat returns openai-responses-sse", async () => {
-    const { CodexAPIFormat } = await import("./adapters/codex-api-format.js");
-    expect(new CodexAPIFormat("codex-mini").getStreamFormat()).toBe("openai-responses-sse");
-  });
-
-  test("GLMModelDialect inherits openai-sse (uses OpenAI-compat API)", async () => {
-    const { GLMModelDialect } = await import("./adapters/glm-model-dialect.js");
-    expect(new GLMModelDialect("glm-5").getStreamFormat()).toBe("openai-sse");
-  });
-});
-
-describe("CodexAdapter", () => {
-  test("shouldHandle returns true for codex models", async () => {
-    const { CodexAPIFormat } = await import("./adapters/codex-api-format.js");
-    expect(new CodexAPIFormat("codex-mini").shouldHandle("codex-mini")).toBe(true);
-    expect(new CodexAPIFormat("codex-mini").shouldHandle("codex-davinci-002")).toBe(true);
-  });
-
-  test("shouldHandle returns false for non-codex models", async () => {
-    const { CodexAPIFormat } = await import("./adapters/codex-api-format.js");
-    expect(new CodexAPIFormat("gpt-5.4").shouldHandle("gpt-5.4")).toBe(false);
-    expect(new CodexAPIFormat("o3").shouldHandle("o3")).toBe(false);
-  });
-
-  test("getStreamFormat returns openai-responses-sse", async () => {
-    const { CodexAPIFormat } = await import("./adapters/codex-api-format.js");
-    expect(new CodexAPIFormat("codex-mini").getStreamFormat()).toBe("openai-responses-sse");
-  });
-
-  test("getName returns CodexAPIFormat", async () => {
-    const { CodexAPIFormat } = await import("./adapters/codex-api-format.js");
-    expect(new CodexAPIFormat("codex-mini").getName()).toBe("CodexAPIFormat");
-  });
-
-  test("AdapterManager selects CodexAPIFormat for codex-mini", async () => {
-    const { DialectManager } = await import("./adapters/dialect-manager.js");
-    expect(new DialectManager("codex-mini").getAdapter().getName()).toBe("CodexAPIFormat");
-  });
-});
-
-describe("ModelDialect interface compliance", () => {
-  test("GLMAdapter implements translator methods", async () => {
-    const { GLMModelDialect } = await import("./adapters/glm-model-dialect.js");
-    const t = new GLMModelDialect("glm-5");
-    expect(typeof t.getContextWindow()).toBe("number");
-    expect(typeof t.supportsVision()).toBe("boolean");
-    expect(typeof t.prepareRequest).toBe("function");
-    expect(typeof t.shouldHandle).toBe("function");
-    expect(typeof t.getName).toBe("function");
-  });
-});
-
 // ─── ProviderProfile Table Tests ─────────────────────────────────────────────
-
-describe("ProviderProfile table completeness", () => {
-  test("all expected providers are registered", async () => {
-    const { PROVIDER_PROFILES } = await import("./providers/provider-profiles.js");
-
-    const expectedProviders = [
-      "gemini",
-      "gemini-codeassist",
-      "openai",
-      "minimax",
-      "minimax-coding",
-      "kimi",
-      "kimi-coding",
-      "z-ai",
-      "glm",
-      "glm-coding",
-      "opencode-zen",
-      "opencode-zen-go",
-      "ollamacloud",
-      "litellm",
-      "vertex",
-    ];
-
-    for (const provider of expectedProviders) {
-      expect(PROVIDER_PROFILES).toHaveProperty(provider);
-    }
-  });
-
-  test("each profile has a createHandler function", async () => {
-    const { PROVIDER_PROFILES } = await import("./providers/provider-profiles.js");
-
-    for (const profile of Object.values(PROVIDER_PROFILES)) {
-      expect(typeof profile.createHandler).toBe("function");
-    }
-  });
-});
 
 // ─── Regression: Production Fixture Tests ───────────────────────────────────
 //

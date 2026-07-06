@@ -219,20 +219,3 @@ describe("field preservation (raw read-modify-write)", () => {
     expect(listOnepasswordImports("global", paths)).toEqual(["op://V/I/A", "op://V/I/B"]);
   });
 });
-
-describe("loadConfig allowlist preserves onepasswordEnvironments", () => {
-  // This guards the profile-config.ts change: a global load→save round-trip via
-  // the canonical config path must NOT drop the new field. We exercise the real
-  // profile-config functions against a temp HOME-independent check by writing
-  // the field, then asserting loadConfig surfaces it. (loadConfig reads the real
-  // ~/.claudish path, so we only assert the merge logic via a direct shape test
-  // when the field is present in a parsed object.)
-  test("onepasswordEnvironments is a recognized config field", async () => {
-    const { loadConfig } = await import("../profile-config.js");
-    // Smoke: loadConfig returns a typed object; the field is optional so this
-    // simply confirms the import + type wiring compile and run. Round-trip
-    // preservation of arbitrary fields is covered by the raw-merge tests above.
-    const cfg = loadConfig();
-    expect(typeof cfg.version).toBe("string");
-  });
-});

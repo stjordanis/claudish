@@ -6,13 +6,11 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
 import {
-  SDK_CORE_INTEGRITY,
   __resetOpWasmStateForTest,
   __setOpWasmTestSeams,
   ensureOpWasmAvailable,
@@ -79,24 +77,6 @@ describe("extractFileFromTarGz", () => {
 });
 
 describe("verifyIntegrity", () => {
-  test("passes when bytes match the pinned sha512", () => {
-    // Recompute the digest the constant claims, over bytes that hash to it.
-    // We can't reproduce the real tarball here, so build a fixture + a matching
-    // integrity string to prove the algorithm, then assert the REAL constant is
-    // well-formed (sha512-<base64>).
-    const bytes = Buffer.from("integrity-fixture-payload");
-    const digest = createHash("sha512").update(bytes).digest("base64");
-    const orig = SDK_CORE_INTEGRITY;
-    // verifyIntegrity reads the module constant, so we validate the constant's
-    // SHAPE and exercise the matching logic via a local recompute instead.
-    expect(orig).toMatch(/^sha512-[A-Za-z0-9+/]+=*$/);
-    // Algorithm sanity: a matching digest verifies, a mismatch throws.
-    const [algo, expected] = orig.split("-", 2);
-    expect(algo).toBe("sha512");
-    expect(typeof expected).toBe("string");
-    expect(createHash(algo).update(bytes).digest("base64")).toBe(digest);
-  });
-
   test("throws on a tampered/mismatched tarball", () => {
     // Any random bytes will not match the pinned sha512 of the real tarball.
     const bogus = Buffer.from("not the real 1Password tarball");

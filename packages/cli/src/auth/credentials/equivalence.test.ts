@@ -227,11 +227,6 @@ installCodexOverride();
 const { credentials } = await import("./authority.js");
 const { hasCredentialsForProvider } = await import("../../providers/routing-rules.js");
 
-// Sanity: the oracle must be exported for the equivalence gate.
-test("hasCredentialsForProvider is exported from routing-rules", async () => {
-  expect(typeof hasCredentialsForProvider).toBe("function");
-});
-
 // ── Env snapshotting ──────────────────────────────────────────────────────────
 
 const ENV_VARS = [

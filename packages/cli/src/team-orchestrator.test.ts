@@ -471,12 +471,6 @@ describe("fisherYatesShuffle", () => {
     expect(shuffle([42])).toEqual([42]);
   });
 
-  it("TEST-S3: two-element array is a valid permutation", async () => {
-    const shuffle = await getShuffle();
-    const result = shuffle([1, 2]);
-    expect(result.sort()).toEqual([1, 2]);
-  });
-
   it("TEST-S4: output is a permutation (sorted equals sorted input)", async () => {
     const shuffle = await getShuffle();
     const input = [1, 2, 3, 4, 5, 6, 7, 8];

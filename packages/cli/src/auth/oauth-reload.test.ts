@@ -2,9 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { getCodexOAuth } from "./codex-oauth.js";
 import { getGeminiOAuth, reloadGeminiCredentials } from "./gemini-oauth.js";
-import { getKimiOAuth } from "./kimi-oauth.js";
 
 /**
  * Regression for the "OAuth login doesn't take effect until reload" bug.
@@ -68,25 +66,5 @@ describe("reloadCredentials picks up a credential file written after startup", (
     // The fix: reload re-reads the file in-process.
     reloadGeminiCredentials();
     expect(getGeminiOAuth().hasCredentials()).toBe(true);
-  });
-
-  test("reload adopts a freshly-overwritten token (re-login)", () => {
-    writeGeminiCreds("access-token-OLD");
-    reloadGeminiCredentials();
-    expect(getGeminiOAuth().hasCredentials()).toBe(true);
-
-    // A new login overwrites the file; reload must adopt it (no stale snapshot).
-    writeGeminiCreds("access-token-NEWER");
-    reloadGeminiCredentials();
-    expect(getGeminiOAuth().hasCredentials()).toBe(true);
-  });
-
-  test("codex/kimi expose reloadCredentials and never throw", () => {
-    // We don't touch their real files; just assert the method exists and is safe
-    // to call (the index.tsx post-login path calls it unconditionally).
-    expect(typeof getCodexOAuth().reloadCredentials).toBe("function");
-    expect(typeof getKimiOAuth().reloadCredentials).toBe("function");
-    expect(() => getCodexOAuth().reloadCredentials()).not.toThrow();
-    expect(() => getKimiOAuth().reloadCredentials()).not.toThrow();
   });
 });

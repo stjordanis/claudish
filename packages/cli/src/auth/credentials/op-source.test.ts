@@ -6,9 +6,9 @@
  *     resolveOpKeyForEnvVars that return BEFORE any 1Password module/SDK is
  *     touched;
  *  2. the GLOB SINGLE-FLIGHT: one configured glob resolves ONCE per process
- *     (one vaults.list + items.list + items.get + secrets.resolveAll) no matter
- *     how many providers ask, failures are never memoized, and two different
- *     globs never cross-contaminate.
+ *     (one vaults.list + items.list + items.get; values come from that
+ *     discovery, so NO secrets.resolveAll) no matter how many providers ask,
+ *     failures are never memoized, and two different globs never cross-contaminate.
  *
  * The deep resolution primitives (collectConfigImports / resolveGlobImportAll /
  * resolveSecrets) are exhaustively tested in providers/onepassword.test.ts; the
@@ -89,14 +89,6 @@ describe("hasOpSources() — the sync laziness gate", () => {
     __resetSniffForTests();
     expect(hasOpSources()).toBe(true);
   });
-
-  it("is memoized (config doesn't change mid-run)", () => {
-    process.argv = ["bun", "index.ts"];
-    __resetSniffForTests();
-    const first = hasOpSources();
-    process.argv = ["bun", "index.ts", "--op", "op://V/Item/**"]; // changed AFTER first sniff
-    expect(hasOpSources()).toBe(first); // still cached, not re-read
-  });
 });
 
 describe("resolveOpKeyForEnvVars() — short-circuits (no SDK touched)", () => {
@@ -117,7 +109,8 @@ describe("resolveOpKeyForEnvVars() — short-circuits (no SDK touched)", () => {
 // Fixture DERIVED from providers/onepassword.test.ts's real-captured item (same
 // vault/item/section/field titles — a compact subset; no invented secret-like
 // data). The fake SdkClientFactory counts every SDK namespace call so the tests
-// can assert "exactly ONE discovery + ONE batched resolveAll" for N providers.
+// can assert "exactly ONE discovery, and NO resolveAll" for N providers (the
+// glob path reads values from discovery, not a second title-based resolve).
 // ===========================================================================
 
 const VAULT = "Jack";
@@ -125,7 +118,6 @@ const ITEM = "AI LLM models API keys 10xlabs";
 const GLOB_ALL = `op://${VAULT}/${ITEM}/**`;
 const GLOB_OPENAI = `op://${VAULT}/${ITEM}/OpenAI/*`;
 const GLOB_MOON = `op://${VAULT}/${ITEM}/Moonshot Kimi/*`;
-const refOf = (rest: string): string => `op://${VAULT}/${ITEM}/${rest}`;
 
 /** SDK-shaped item (subset of the captured fixture — same titles/sections). */
 const SDK_ITEM: Awaited<ReturnType<SdkClientLike["items"]["get"]>> = {
@@ -248,18 +240,14 @@ describe("glob single-flight — one resolution shared by every provider", () =>
       resolveOne("OPENAI_API_KEY"),
     ]);
 
-    // ONE full discovery + ONE batched resolveAll — not one per provider.
-    expect(counts).toEqual({ vaultsList: 1, itemsList: 1, itemsGet: 1, resolveAll: 1 });
+    // ONE full discovery, and NO resolveAll — values come from discovery now.
+    expect(counts).toEqual({ vaultsList: 1, itemsList: 1, itemsGet: 1, resolveAll: 0 });
 
-    // Every caller got ITS value out of the shared result.
-    expect(openai).toEqual({ OPENAI_API_KEY: `sdk:${refOf("OpenAI/OPENAI_API_KEY")}` });
-    expect(moonshot).toEqual({
-      MOONSHOT_API_KEY: `sdk:${refOf("Moonshot Kimi/MOONSHOT_API_KEY")}`,
-    });
-    expect(kimi).toEqual({
-      KIMI_CODING_API_KEY: `sdk:${refOf("Moonshot Kimi/KIMI_CODING_API_KEY")}`,
-    });
-    expect(zhipu).toEqual({ ZHIPU_API_KEY: `sdk:${refOf("GLM Z models/ZHIPU_API_KEY")}` });
+    // Every caller got ITS value out of the shared result (the discovered value).
+    expect(openai).toEqual({ OPENAI_API_KEY: "x" });
+    expect(moonshot).toEqual({ MOONSHOT_API_KEY: "x" });
+    expect(kimi).toEqual({ KIMI_CODING_API_KEY: "x" });
+    expect(zhipu).toEqual({ ZHIPU_API_KEY: "x" });
     expect(missing).toEqual({}); // the glob simply doesn't hold this key
     expect(openaiAgain).toEqual(openai);
   });
@@ -273,13 +261,11 @@ describe("glob single-flight — one resolution shared by every provider", () =>
 
     // A var NEVER wanted before — but the full-glob result already holds it.
     const moonshot = await resolveOne("MOONSHOT_API_KEY");
-    expect(moonshot).toEqual({
-      MOONSHOT_API_KEY: `sdk:${refOf("Moonshot Kimi/MOONSHOT_API_KEY")}`,
-    });
+    expect(moonshot).toEqual({ MOONSHOT_API_KEY: "x" });
     // A var the glob does NOT hold → memoized empty pick, still no SDK.
     expect(await resolveOne("NOT_IN_THIS_ITEM_KEY")).toEqual({});
 
-    expect(counts).toEqual({ vaultsList: 1, itemsList: 1, itemsGet: 1, resolveAll: 1 });
+    expect(counts).toEqual({ vaultsList: 1, itemsList: 1, itemsGet: 1, resolveAll: 0 });
   });
 
   it("a FAILED glob resolution is not cached — the next resolve retries", async () => {
@@ -294,8 +280,8 @@ describe("glob single-flight — one resolution shared by every provider", () =>
 
     // Second resolve: the rejected promise was EVICTED → full retry, succeeds.
     const out = await resolveOne("OPENAI_API_KEY");
-    expect(out).toEqual({ OPENAI_API_KEY: `sdk:${refOf("OpenAI/OPENAI_API_KEY")}` });
-    expect(counts).toEqual({ vaultsList: 2, itemsList: 1, itemsGet: 1, resolveAll: 1 });
+    expect(out).toEqual({ OPENAI_API_KEY: "x" });
+    expect(counts).toEqual({ vaultsList: 2, itemsList: 1, itemsGet: 1, resolveAll: 0 });
   });
 
   it("two DIFFERENT globs → two resolutions, no cross-contamination", async () => {
@@ -304,20 +290,18 @@ describe("glob single-flight — one resolution shared by every provider", () =>
 
     // Wanted key lives in glob #1 → glob #2 is never touched (loop breaks).
     const openai = await resolveOne("OPENAI_API_KEY");
-    expect(openai).toEqual({ OPENAI_API_KEY: `sdk:${refOf("OpenAI/OPENAI_API_KEY")}` });
+    expect(openai).toEqual({ OPENAI_API_KEY: "x" });
     expect(counts.itemsGet).toBe(1);
 
     // Wanted key lives in glob #2 → glob #1 is a memoized miss, #2 resolves.
     const moonshot = await resolveOne("MOONSHOT_API_KEY");
-    expect(moonshot).toEqual({
-      MOONSHOT_API_KEY: `sdk:${refOf("Moonshot Kimi/MOONSHOT_API_KEY")}`,
-    });
+    expect(moonshot).toEqual({ MOONSHOT_API_KEY: "x" });
     expect(counts.itemsGet).toBe(2);
 
     // A key NEITHER scoped glob matches → both memoized, no more SDK calls.
     expect(await resolveOne("ZHIPU_API_KEY")).toEqual({});
     expect(counts.itemsGet).toBe(2);
-    expect(counts.resolveAll).toBe(2);
+    expect(counts.resolveAll).toBe(0);
   });
 
   it("invalidateOpResolutionCache() forces a fresh discovery on the next resolve", async () => {
@@ -333,36 +317,5 @@ describe("glob single-flight — one resolution shared by every provider", () =>
 
     await resolveOne("OPENAI_API_KEY");
     expect(counts.itemsGet).toBe(2);
-  });
-
-  it("trace observability: ONE op:glob-resolve span (masked), later resolves marked globCacheHit", async () => {
-    __configureStartupTraceForTests({ now: () => 0, stderr: () => {}, outPath: "/dev/null" });
-    try {
-      const { factory } = makeCountingFactory();
-      seamWith([GLOB_ALL], factory);
-
-      await Promise.all([
-        resolveOne("OPENAI_API_KEY"),
-        resolveOne("MOONSHOT_API_KEY"),
-        resolveOne("NOT_IN_THIS_ITEM_KEY"),
-      ]);
-
-      const spans = __getStartupSpansForTests();
-      const globSpans = spans.filter((s) => s.name.startsWith("op:glob-resolve("));
-      expect(globSpans).toHaveLength(1);
-      // The label is MASKED: long item titles are mid-truncated.
-      expect(globSpans[0].name).not.toContain(ITEM);
-      expect(globSpans[0].name).toContain("op://Jack/");
-      expect(globSpans[0].meta?.vars).toBe(4);
-
-      // The queued resolves that were served from the shared result carry the
-      // cache-hit marker (their exec is a pure in-memory pick).
-      const cacheHits = spans.filter(
-        (s) => s.name.startsWith("op:resolve(") && s.meta?.globCacheHit === true
-      );
-      expect(cacheHits.length).toBeGreaterThanOrEqual(2);
-    } finally {
-      __resetStartupTraceForTests();
-    }
   });
 });

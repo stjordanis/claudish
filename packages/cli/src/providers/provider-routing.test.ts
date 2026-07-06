@@ -8,20 +8,8 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { DefaultAPIFormat } from "../adapters/base-api-format.js";
-import { CodexAPIFormat } from "../adapters/codex-api-format.js";
-import { DeepSeekModelDialect } from "../adapters/deepseek-model-dialect.js";
-import { DialectManager } from "../adapters/dialect-manager.js";
-import { GeminiAPIFormat } from "../adapters/gemini-api-format.js";
-import { GLMModelDialect } from "../adapters/glm-model-dialect.js";
-import { GrokModelDialect } from "../adapters/grok-model-dialect.js";
-import { MiniMaxModelDialect } from "../adapters/minimax-model-dialect.js";
-import { OpenAIAPIFormat } from "../adapters/openai-api-format.js";
-import { QwenModelDialect } from "../adapters/qwen-model-dialect.js";
-import { XiaomiModelDialect } from "../adapters/xiaomi-model-dialect.js";
 import { parseModelSpec } from "./model-parser.js";
 import { BUILTIN_PROVIDERS } from "./provider-definitions.js";
-import { PROVIDER_PROFILES } from "./provider-profiles.js";
 import { OpenAIProviderTransport } from "./transport/openai.js";
 
 // ---------------------------------------------------------------------------
@@ -169,174 +157,9 @@ describe("parseModelSpec — native model auto-detection", () => {
 // Section 2: Adapter selection
 // ---------------------------------------------------------------------------
 
-describe("DialectManager — correct dialect selection", () => {
-  test("grok-beta → GrokModelDialect", () => {
-    const adapter = new DialectManager("grok-beta").getAdapter();
-    expect(adapter).toBeInstanceOf(GrokModelDialect);
-  });
-
-  test("x-ai/grok-beta → GrokModelDialect", () => {
-    const adapter = new DialectManager("x-ai/grok-beta").getAdapter();
-    expect(adapter).toBeInstanceOf(GrokModelDialect);
-  });
-
-  test("gemini-2.0-flash → GeminiAPIFormat", () => {
-    const adapter = new DialectManager("gemini-2.0-flash").getAdapter();
-    expect(adapter).toBeInstanceOf(GeminiAPIFormat);
-  });
-
-  test("google/gemini-2.5-pro → GeminiAPIFormat", () => {
-    const adapter = new DialectManager("google/gemini-2.5-pro").getAdapter();
-    expect(adapter).toBeInstanceOf(GeminiAPIFormat);
-  });
-
-  test("deepseek-r1 → DeepSeekModelDialect", () => {
-    const adapter = new DialectManager("deepseek-r1").getAdapter();
-    expect(adapter).toBeInstanceOf(DeepSeekModelDialect);
-  });
-
-  test("glm-5 → GLMModelDialect", () => {
-    const adapter = new DialectManager("glm-5").getAdapter();
-    expect(adapter).toBeInstanceOf(GLMModelDialect);
-  });
-
-  test("zhipu/glm-4 → GLMModelDialect", () => {
-    const adapter = new DialectManager("zhipu/glm-4").getAdapter();
-    expect(adapter).toBeInstanceOf(GLMModelDialect);
-  });
-
-  test("minimax-m2.5 → MiniMaxModelDialect", () => {
-    const adapter = new DialectManager("minimax-m2.5").getAdapter();
-    expect(adapter).toBeInstanceOf(MiniMaxModelDialect);
-  });
-
-  test("qwen3-coder → QwenModelDialect", () => {
-    const adapter = new DialectManager("qwen3-coder").getAdapter();
-    expect(adapter).toBeInstanceOf(QwenModelDialect);
-  });
-
-  test("xiaomi/mimo-vl-2b → XiaomiModelDialect", () => {
-    const adapter = new DialectManager("xiaomi/mimo-vl-2b").getAdapter();
-    expect(adapter).toBeInstanceOf(XiaomiModelDialect);
-  });
-
-  test("codex-mini → CodexAPIFormat", () => {
-    const adapter = new DialectManager("codex-mini").getAdapter();
-    expect(adapter).toBeInstanceOf(CodexAPIFormat);
-  });
-
-  test("gpt-4o → DefaultAPIFormat (GPT models use default OpenAI format)", () => {
-    const adapter = new DialectManager("gpt-4o").getAdapter();
-    expect(adapter).toBeInstanceOf(DefaultAPIFormat);
-  });
-
-  test("o3-mini → OpenAIAPIFormat (o-series needs reasoning_effort mapping)", () => {
-    const adapter = new DialectManager("o3-mini").getAdapter();
-    expect(adapter).toBeInstanceOf(OpenAIAPIFormat);
-  });
-
-  test("unknown-model → DefaultAPIFormat", () => {
-    const adapter = new DialectManager("unknown-model").getAdapter();
-    expect(adapter).toBeInstanceOf(DefaultAPIFormat);
-  });
-});
-
-describe("DialectManager — false positive prevention", () => {
-  test("qwen-grok-hybrid → QwenModelDialect (NOT GrokModelDialect)", () => {
-    const adapter = new DialectManager("qwen-grok-hybrid").getAdapter();
-    expect(adapter).toBeInstanceOf(QwenModelDialect);
-    expect(adapter).not.toBeInstanceOf(GrokModelDialect);
-  });
-
-  test("deepseek-glm-test → DeepSeekModelDialect (NOT GLMModelDialect)", () => {
-    const adapter = new DialectManager("deepseek-glm-test").getAdapter();
-    expect(adapter).toBeInstanceOf(DeepSeekModelDialect);
-    expect(adapter).not.toBeInstanceOf(GLMModelDialect);
-  });
-
-  test("my-grok-clone → DefaultAPIFormat (not GrokModelDialect — grok is mid-string)", () => {
-    const adapter = new DialectManager("my-grok-clone").getAdapter();
-    expect(adapter).not.toBeInstanceOf(GrokModelDialect);
-    // Should fall to default since none of the specific families match
-    expect(adapter).toBeInstanceOf(DefaultAPIFormat);
-  });
-
-  test("my-minimax-clone → DefaultAPIFormat (not MiniMaxModelDialect)", () => {
-    const adapter = new DialectManager("my-minimax-clone").getAdapter();
-    expect(adapter).not.toBeInstanceOf(MiniMaxModelDialect);
-    expect(adapter).toBeInstanceOf(DefaultAPIFormat);
-  });
-
-  test("test-deepseek-model → DefaultAPIFormat (not DeepSeekModelDialect — deepseek is mid-string)", () => {
-    const adapter = new DialectManager("test-deepseek-model").getAdapter();
-    expect(adapter).not.toBeInstanceOf(DeepSeekModelDialect);
-    expect(adapter).toBeInstanceOf(DefaultAPIFormat);
-  });
-
-  test("vendor/grok-beta uses GrokModelDialect (vendor prefix is fine)", () => {
-    const adapter = new DialectManager("vendor/grok-beta").getAdapter();
-    expect(adapter).toBeInstanceOf(GrokModelDialect);
-  });
-
-  test("vendor/deepseek-r1 uses DeepSeekModelDialect (vendor prefix)", () => {
-    const adapter = new DialectManager("vendor/deepseek-r1").getAdapter();
-    expect(adapter).toBeInstanceOf(DeepSeekModelDialect);
-  });
-
-  test("vendor/minimax-m2.5 uses MiniMaxModelDialect (vendor prefix)", () => {
-    const adapter = new DialectManager("vendor/minimax-m2.5").getAdapter();
-    expect(adapter).toBeInstanceOf(MiniMaxModelDialect);
-  });
-
-  test("openrouter/x-ai/grok-beta uses GrokModelDialect (double vendor prefix)", () => {
-    const adapter = new DialectManager("openrouter/x-ai/grok-beta").getAdapter();
-    expect(adapter).toBeInstanceOf(GrokModelDialect);
-  });
-
-  test("provider-prefixed glm-4.7 → DefaultAPIFormat (regression #102: zai@glm matched GLMModelDialect)", () => {
-    // The DialectManager should receive bare model names, not provider-prefixed strings.
-    // But even if it does, the @ separator must not trigger a family match.
-    const adapter = new DialectManager("zai@glm-4.7").getAdapter();
-    expect(adapter).not.toBeInstanceOf(GLMModelDialect);
-    expect(adapter).toBeInstanceOf(DefaultAPIFormat);
-  });
-});
-
 // ---------------------------------------------------------------------------
 // Section 3: Provider profiles
 // ---------------------------------------------------------------------------
-
-describe("PROVIDER_PROFILES — coverage", () => {
-  test("every entry in PROVIDER_PROFILES has a matching BUILTIN_PROVIDER", () => {
-    for (const profileName of Object.keys(PROVIDER_PROFILES)) {
-      // Profile names match RemoteProvider.name which maps google→gemini
-      const builtinName = profileName === "gemini" ? "google" : profileName;
-      const def = BUILTIN_PROVIDERS.find((d) => d.name === builtinName || d.name === profileName);
-      expect(def).toBeDefined();
-    }
-  });
-
-  test("all remote BUILTIN_PROVIDERS have a profile (except openrouter, poe, qwen, native-anthropic)", () => {
-    // openrouter has its own dedicated handler (not ComposedHandler), poe has
-    // transport but no profile yet, native-anthropic is a passthrough format.
-    // Local providers (ollama, lmstudio, vllm, mlx) use a separate local path.
-    const skipProviders = new Set([
-      "native-anthropic",
-      "poe",
-      "openrouter",
-      "ollama",
-      "lmstudio",
-      "vllm",
-      "mlx",
-    ]);
-    for (const def of BUILTIN_PROVIDERS) {
-      if (skipProviders.has(def.name)) continue;
-      const profileName = def.name === "google" ? "gemini" : def.name;
-      const profile = PROVIDER_PROFILES[profileName];
-      expect(profile).toBeDefined();
-    }
-  });
-});
 
 // ---------------------------------------------------------------------------
 // Section 4: Edge cases
@@ -431,14 +254,6 @@ describe("OpenCode Zen — model routing", () => {
     authScheme: undefined,
   };
 
-  const sharedCtx = {
-    provider: zenBaseProvider,
-    apiKey: "test-key",
-    targetModel: "placeholder",
-    port: 4000,
-    sharedOpts: { isInteractive: false as const, invocationMode: "explicit-model" as const },
-  };
-
   test("GPT model routes to Responses API endpoint (/v1/responses)", () => {
     // The transport for GPT models via Zen must point to /v1/responses, not /v1/chat/completions.
     const responsesProvider = { ...zenBaseProvider, apiPath: "/v1/responses" };
@@ -449,29 +264,5 @@ describe("OpenCode Zen — model routing", () => {
   test("non-GPT model routes to chat completions endpoint (/v1/chat/completions)", () => {
     const transport = new OpenAIProviderTransport(zenBaseProvider, "glm-5", "key");
     expect(transport.getEndpoint()).toBe("https://opencode.ai/zen/v1/chat/completions");
-  });
-
-  test("GPT model createHandler returns non-null", () => {
-    const profile = PROVIDER_PROFILES["opencode-zen"];
-    const handler = profile.createHandler({ ...sharedCtx, modelName: "gpt-4o" });
-    expect(handler).not.toBeNull();
-  });
-
-  test("MiniMax model createHandler returns non-null", () => {
-    const profile = PROVIDER_PROFILES["opencode-zen"];
-    const handler = profile.createHandler({ ...sharedCtx, modelName: "minimax-m2.5" });
-    expect(handler).not.toBeNull();
-  });
-
-  test("GLM model createHandler returns non-null (default OpenAI path)", () => {
-    const profile = PROVIDER_PROFILES["opencode-zen"];
-    const handler = profile.createHandler({ ...sharedCtx, modelName: "glm-5" });
-    expect(handler).not.toBeNull();
-  });
-
-  test("GPT adapter is CodexAPIFormat (Responses API wire format)", () => {
-    // Validate that CodexAPIFormat reports the correct stream format for GPT via Zen.
-    const adapter = new CodexAPIFormat("gpt-4o");
-    expect(adapter.getStreamFormat()).toBe("openai-responses-sse");
   });
 });

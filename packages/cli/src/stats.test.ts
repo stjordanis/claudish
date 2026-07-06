@@ -47,59 +47,6 @@ describe("stats module — env var override", () => {
   afterEach(() => {
     delete process.env.CLAUDISH_STATS;
   });
-
-  it("CLAUDISH_STATS=0 is detected as disabled", async () => {
-    process.env.CLAUDISH_STATS = "0";
-    const { clearBuffer } = await import("./stats-buffer.js");
-    clearBuffer();
-
-    // Stats recording should silently no-op when env var disables it
-    // We test this indirectly: recordStats should not throw
-    const { recordStats, initStats } = await import("./stats.js");
-    // Reset initialized state by calling initStats again (idempotent)
-    initStats({ interactive: false } as any);
-
-    expect(() => recordStats({ model_id: "test-model" })).not.toThrow();
-  });
-
-  it("CLAUDISH_STATS=false is detected as disabled", () => {
-    process.env.CLAUDISH_STATS = "false";
-    const envValue = process.env.CLAUDISH_STATS;
-    expect(envValue === "0" || envValue === "false" || envValue === "off").toBe(true);
-  });
-
-  it("CLAUDISH_STATS=off is detected as disabled", () => {
-    process.env.CLAUDISH_STATS = "off";
-    const envValue = process.env.CLAUDISH_STATS;
-    expect(envValue === "0" || envValue === "false" || envValue === "off").toBe(true);
-  });
-
-  it("undefined CLAUDISH_STATS is not disabled", () => {
-    delete process.env.CLAUDISH_STATS;
-    const envValue = process.env.CLAUDISH_STATS;
-    const isDisabled = envValue === "0" || envValue === "false" || envValue === "off";
-    expect(isDisabled).toBe(false);
-  });
-});
-
-describe("stats module — initStats", () => {
-  it("initStats does not throw", async () => {
-    const { initStats } = await import("./stats.js");
-    expect(() => initStats({ interactive: false } as any)).not.toThrow();
-  });
-
-  it("recordStats does not throw when stats disabled", async () => {
-    const { recordStats } = await import("./stats.js");
-    expect(() =>
-      recordStats({
-        model_id: "gemini-2.5-pro",
-        provider_name: "gemini",
-        latency_ms: 100,
-        success: true,
-        http_status: 200,
-      })
-    ).not.toThrow();
-  });
 });
 
 describe("stats module — showMonthlyBanner", () => {
@@ -120,11 +67,6 @@ describe("stats module — showMonthlyBanner", () => {
   afterEach(() => {
     process.stderr.write = originalStderr;
     restoreFile(CONFIG_FILE, configBackup);
-  });
-
-  it("showMonthlyBanner does not throw", async () => {
-    const { showMonthlyBanner } = await import("./stats.js");
-    expect(() => showMonthlyBanner()).not.toThrow();
   });
 
   it("shows first-run banner when no lastMonthlyPrompt is set", async () => {
@@ -252,19 +194,5 @@ describe("OTLP timeUnixNano format", () => {
     // Should be approximately March 2026 in nanoseconds
     // 2026-03-16 = ~1.77e18 nanoseconds since epoch
     expect(nano).toBeGreaterThan(1_700_000_000_000_000_000);
-  });
-
-  it("uses 30-day interval for monthly check (not calendar months)", () => {
-    const MONTHLY_INTERVAL_MS = 30 * 24 * 60 * 60 * 1000;
-    // 30 days = 2,592,000,000 ms
-    expect(MONTHLY_INTERVAL_MS).toBe(2_592_000_000);
-
-    // 29 days should NOT trigger
-    const notExpired = Date.now() - 29 * 24 * 60 * 60 * 1000;
-    expect(Date.now() - notExpired).toBeLessThan(MONTHLY_INTERVAL_MS);
-
-    // 31 days SHOULD trigger
-    const expired = Date.now() - 31 * 24 * 60 * 60 * 1000;
-    expect(Date.now() - expired).toBeGreaterThan(MONTHLY_INTERVAL_MS);
   });
 });

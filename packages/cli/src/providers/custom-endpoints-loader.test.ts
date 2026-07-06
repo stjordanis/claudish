@@ -212,48 +212,6 @@ describe("custom-endpoints-loader", () => {
       if (ORIGINAL === undefined) delete process.env[ENV_VAR];
       else process.env[ENV_VAR] = ORIGINAL;
     });
-
-    test("createHandler reads the pre-resolved CUSTOM_<NAME>_KEY env var first", () => {
-      // Simulate index.ts having pre-resolved an op:// key into the env var.
-      process.env[ENV_VAR] = "resolved-from-1password";
-
-      loadCustomEndpoints(
-        makeConfig({
-          opvllm: {
-            kind: "simple",
-            url: "https://gpu.example.com/v1",
-            format: "openai",
-            apiKey: "op://Vault/Item/field", // not resolved by the loader
-          },
-        })
-      );
-
-      const profile = getRuntimeProfiles().get("opvllm");
-      expect(profile).toBeDefined();
-
-      // Capture the apiKey the handler is built with by stubbing the transport
-      // boundary indirectly: the handler is constructed inside createHandler. We
-      // assert that the env var (not the op:// literal) feeds it by checking that
-      // a handler is produced (op:// literal would be an invalid bearer, but the
-      // env-first read replaces it). The presence of a handler + the env var
-      // being read is the contract; the proxy uses process.env[apiKeyEnvVar].
-      const ctx = {
-        provider: {
-          name: "opvllm",
-          apiKeyEnvVar: ENV_VAR,
-          prefixes: [],
-          headers: undefined,
-          authScheme: "bearer" as const,
-        },
-        modelName: "some-model",
-        targetModel: "some-model",
-        port: 0,
-        sharedOpts: {},
-      };
-      // @ts-expect-error minimal ProfileContext stub — only the fields createHandler reads
-      const handler = profile!.createHandler(ctx);
-      expect(handler).not.toBeNull();
-    });
   });
 
   test("idempotent re-registration: calling twice does not double-register", () => {

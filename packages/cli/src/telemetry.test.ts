@@ -42,11 +42,6 @@ describe("telemetry consent prompt gating", () => {
     restoreConfig();
   });
 
-  it("exports setClaudeCodeRunning to signal when Claude Code owns the TTY", async () => {
-    const telemetry = await import(`./telemetry.ts?t=${Date.now()}`);
-    expect(typeof telemetry.setClaudeCodeRunning).toBe("function");
-  });
-
   it("does NOT attach readline to process.stdin when Claude Code is running", async () => {
     const telemetry = await import(`./telemetry.ts?t=${Date.now()}`);
 

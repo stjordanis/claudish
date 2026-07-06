@@ -108,20 +108,10 @@ describe("CustomEndpointSchema (discriminated union)", () => {
 });
 
 describe("BuiltinDefaultProviderSchema", () => {
-  test("accepts openrouter", () => {
-    expect(BuiltinDefaultProviderSchema.parse("openrouter")).toBe("openrouter");
-  });
-  test("accepts litellm", () => {
-    expect(BuiltinDefaultProviderSchema.parse("litellm")).toBe("litellm");
-  });
-  test("accepts openai", () => {
-    expect(BuiltinDefaultProviderSchema.parse("openai")).toBe("openai");
-  });
-  test("accepts anthropic", () => {
-    expect(BuiltinDefaultProviderSchema.parse("anthropic")).toBe("anthropic");
-  });
-  test("accepts google", () => {
-    expect(BuiltinDefaultProviderSchema.parse("google")).toBe("google");
+  // Pins the documented set of built-in provider names — an enum edit
+  // (dropped/renamed/typo'd member) would ship a broken user-facing config contract.
+  test.each(["openrouter", "litellm", "openai", "anthropic", "google"])("accepts %s", (name) => {
+    expect(BuiltinDefaultProviderSchema.parse(name)).toBe(name);
   });
 
   test("rejects unknown builtin name", () => {
@@ -130,10 +120,6 @@ describe("BuiltinDefaultProviderSchema", () => {
 });
 
 describe("DefaultProviderSchema", () => {
-  test("accepts builtin name", () => {
-    expect(DefaultProviderSchema.parse("openrouter")).toBe("openrouter");
-  });
-
   test("accepts a custom endpoint name like `my-vllm`", () => {
     expect(DefaultProviderSchema.parse("my-vllm")).toBe("my-vllm");
   });

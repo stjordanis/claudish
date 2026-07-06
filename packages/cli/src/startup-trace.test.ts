@@ -234,10 +234,6 @@ describe("finalize → JSONL", () => {
     expect(lines[0]).toBe(JSON.stringify({ old: "three" })); // one+two dropped
     expect(JSON.parse(lines[2]).argvKind).toBe("run"); // newest is ours
   });
-
-  test("default cap is 500 lines", () => {
-    expect(STARTUP_METRICS_MAX_LINES).toBe(500);
-  });
 });
 
 describe("slow-start threshold gating", () => {

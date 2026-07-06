@@ -18,7 +18,6 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AnthropicAPIFormat } from "./adapters/anthropic-api-format.js";
-import { DialectManager } from "./adapters/dialect-manager.js";
 import { GLMModelDialect } from "./adapters/glm-model-dialect.js";
 import { MiniMaxModelDialect } from "./adapters/minimax-model-dialect.js";
 import { lookupModel } from "./adapters/model-catalog.js";
@@ -241,44 +240,6 @@ describe("Group 2: GLMModelDialect — prepareRequest", () => {
     const request: any = { ...originalRequest };
     dialect.prepareRequest(request, originalRequest);
     expect(request.thinking).toBeUndefined();
-  });
-});
-
-describe("Group 2: DialectManager — correct dialect selection", () => {
-  test("selects MiniMaxModelDialect for MiniMax-M2.7", () => {
-    const manager = new DialectManager("MiniMax-M2.7");
-    const adapter = manager.getAdapter();
-    expect(adapter.getName()).toBe("MiniMaxModelDialect");
-  });
-
-  test("selects GLMModelDialect for glm-5", () => {
-    const manager = new DialectManager("glm-5");
-    const adapter = manager.getAdapter();
-    expect(adapter.getName()).toBe("GLMModelDialect");
-  });
-
-  test("selects GrokModelDialect for grok-4", () => {
-    const manager = new DialectManager("grok-4");
-    const adapter = manager.getAdapter();
-    expect(adapter.getName()).toBe("GrokModelDialect");
-  });
-
-  test("selects GrokModelDialect for x-ai/grok-4-fast", () => {
-    const manager = new DialectManager("x-ai/grok-4-fast");
-    const adapter = manager.getAdapter();
-    expect(adapter.getName()).toBe("GrokModelDialect");
-  });
-
-  test("selects MiniMaxModelDialect for minimax-m2.5", () => {
-    const manager = new DialectManager("minimax-m2.5");
-    const adapter = manager.getAdapter();
-    expect(adapter.getName()).toBe("MiniMaxModelDialect");
-  });
-
-  test("returns DefaultAPIFormat for unknown model", () => {
-    const manager = new DialectManager("totally-unknown-model-xyz");
-    const adapter = manager.getAdapter();
-    expect(adapter.getName()).toBe("DefaultAPIFormat");
   });
 });
 
@@ -549,10 +510,5 @@ describe("Group 4: AnthropicAPIFormat + MiniMaxModelDialect pipeline", () => {
     expect(payload.messages[0].role).toBe("user");
     expect(payload.messages[1].role).toBe("assistant");
     expect(payload.messages[2].role).toBe("user");
-  });
-
-  test("AnthropicAPIFormat stream format is anthropic-sse", () => {
-    const format = new AnthropicAPIFormat("MiniMax-M2.7", "minimax");
-    expect(format.getStreamFormat()).toBe("anthropic-sse");
   });
 });

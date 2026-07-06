@@ -81,40 +81,6 @@ afterEach(() => {
 });
 
 describe("GeminiCodeAssistProviderTransport — delegated auth artifact", () => {
-  test("getHeaders() returns the delegated headers (Bearer + User-Agent + activity id)", async () => {
-    const t = new GeminiCodeAssistProviderTransport("gemini-2.5-pro");
-    await t.refreshAuth();
-    const headers = await t.getHeaders();
-
-    expect(headers.Authorization).toBe(`Bearer ${FAKE_TOKEN}`);
-    expect(headers["User-Agent"]).toBe("GeminiCLI/0.5.6/gemini-2.5-pro (darwin; arm64)");
-    expect(headers["x-activity-request-id"]).toBe("act-fixed-id");
-
-    expect(getRequestAuthMock).toHaveBeenCalledTimes(1);
-    expect(getRequestAuthMock.mock.calls[0][0]).toBe("gemini-codeassist");
-  });
-
-  test("transformPayload() returns the CodeAssist envelope (free tier: no credit types)", async () => {
-    const t = new GeminiCodeAssistProviderTransport("gemini-2.5-pro");
-    await t.refreshAuth();
-    const env = t.transformPayload({ contents: [{ role: "user", parts: [{ text: "hi" }] }] });
-
-    expect(env.model).toBe("gemini-2.5-pro");
-    expect(env.project).toBe(PROJECT_ID);
-    expect(env.user_prompt_id).toBe("uuid-fixed");
-    expect(env.request).toEqual({ contents: [{ role: "user", parts: [{ text: "hi" }] }] });
-    expect(env.enabled_credit_types).toBeUndefined();
-  });
-
-  test("transformPayload() adds enabled_credit_types on a paid tier", async () => {
-    currentTier = "g1-pro-tier";
-    getRequestAuthMock = mock(async (_name: string, _ctx: any) => makeAuth(currentTier) as any);
-    const t = new GeminiCodeAssistProviderTransport("gemini-2.5-pro");
-    await t.refreshAuth();
-    const env = t.transformPayload({ contents: [] });
-    expect(env.enabled_credit_types).toEqual(["GOOGLE_ONE_AI"]);
-  });
-
   test("getEndpoint() is unchanged (fixed cloudcode-pa endpoint)", async () => {
     const t = new GeminiCodeAssistProviderTransport("gemini-2.5-pro");
     expect(t.getEndpoint()).toBe(

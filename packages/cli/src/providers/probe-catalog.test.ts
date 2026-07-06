@@ -15,7 +15,6 @@ import { join } from "node:path";
 import {
   type ProbeModelsResponse,
   fetchProbeModels,
-  getProbeModel,
   isCacheFresh,
   readProbeModelsCache,
   writeProbeModelsCache,
@@ -180,25 +179,4 @@ describe("getProbeModel", () => {
   // getProbeModel reads from ~/.claudish/probe-models.json directly. The
   // shape contract — string-valued, non-empty, indexed by claudish provider
   // slug — is what these tests pin.
-
-  test("returns null when no cache file exists at default path", () => {
-    // We can't redirect getProbeModel to a tmp path without restructuring,
-    // but it gracefully handles missing/unparseable cache (see the
-    // readProbeModelsCache tests above). This call just exercises the
-    // null-handling path; a stale dev-machine cache wouldn't have this
-    // sentinel slug.
-    const result = getProbeModel("nonexistent-provider-slug-xyz-sentinel");
-    expect(result).toBeNull();
-  });
-
-  test("cache shape: every provider slug maps to a non-empty string", () => {
-    // Pin the contract: backend MUST return entries as { [slug]: string }.
-    // If the shape ever drifts (e.g. backend returns objects), getProbeModel
-    // will return null and the TUI surfaces "no probe model in catalog".
-    for (const [slug, model] of Object.entries(SAMPLE.providers)) {
-      expect(typeof model).toBe("string");
-      expect(model.length).toBeGreaterThan(0);
-      expect(slug.length).toBeGreaterThan(0);
-    }
-  });
 });

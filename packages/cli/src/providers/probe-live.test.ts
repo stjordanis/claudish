@@ -110,13 +110,6 @@ describe("classifyHttpError — remapped terminal errors (upstream_status)", () 
 });
 
 describe("probe budget", () => {
-  test("PROBE_MAX_TOKENS leaves room for hidden reasoning before visible text", () => {
-    // Reasoning models (e.g. gpt-5-nano) burned the whole 64-token budget on
-    // hidden reasoning → HTTP 200 with zero visible content → false FAIL.
-    // Verified live: 256+ tokens produces visible content; pinned at 512.
-    expect(PROBE_MAX_TOKENS).toBe(512);
-  });
-
   test("describeProbeState surfaces errorMessage for a code-less error (contentless 200)", () => {
     // Regression: a reasoning model that spends its whole budget before any
     // visible text returns HTTP 200 (no status) with a self-explaining

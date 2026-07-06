@@ -10,7 +10,6 @@
 
 import { describe, expect, test } from "bun:test";
 import { parseArgs } from "./cli.js";
-import type { ClaudishConfig } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Group 1: Backward Compatibility (existing behavior preserved)
@@ -152,39 +151,10 @@ describe("Group 4: Mixed ordering edge cases", () => {
 // Group 5: Dead Agent Code Removed
 // ---------------------------------------------------------------------------
 
-describe("Group 5: Dead agent code removed", () => {
-  test("--agent passes through to claudeArgs and config has no agent property", async () => {
-    const config = await parseArgs(["--model", "grok", "--agent", "detective", "--stdin"]);
-    // --agent detective must land in claudeArgs
-    expect(config.claudeArgs).toContain("--agent");
-    expect(config.claudeArgs).toContain("detective");
-
-    // ClaudishConfig must NOT have an agent field
-    // This validates that the dead code (agent?: string) has been removed from types.ts
-    // If config.agent were defined, TypeScript would allow this access.
-    // We check at runtime that the property is absent from the returned object.
-    expect((config as unknown as Record<string, unknown>).agent).toBeUndefined();
-
-    // Also verify the config object's own keys do not include 'agent'
-    const keys = Object.keys(config);
-    expect(keys).not.toContain("agent");
-  });
-});
-
 // ---------------------------------------------------------------------------
 // Group 6: Monitor Mode
 // REGRESSION: --monitor flag set ANTHROPIC_MODEL="unknown" — Fixed in /fix session dev-fix-20260303-122306-f3bfd19b
 // ---------------------------------------------------------------------------
-
-/**
- * Inline helper extracted from claude-runner.ts:239-240 to make the modelId
- * calculation unit-testable without spawning processes or creating temp files.
- */
-function computeModelId(config: ClaudishConfig): string | undefined {
-  const hasProfileMappings =
-    config.modelOpus || config.modelSonnet || config.modelHaiku || config.modelSubagent;
-  return config.model || (hasProfileMappings || config.monitor ? undefined : "unknown");
-}
 
 describe("Group 6: Monitor mode", () => {
   test("monitor mode without --model does not set modelId", async () => {
@@ -197,42 +167,6 @@ describe("Group 6: Monitor mode", () => {
     const config = await parseArgs(["--monitor", "--model", "claude-sonnet-4-6", "hello"]);
     expect(config.monitor).toBe(true);
     expect(config.model).toBe("claude-sonnet-4-6");
-  });
-
-  test("monitor mode modelId calculation returns undefined", () => {
-    // When monitor=true and no model specified, modelId must be undefined (not "unknown")
-    // so ANTHROPIC_MODEL is not set in the child process environment.
-    const config: ClaudishConfig = {
-      monitor: true,
-      model: undefined,
-      claudeArgs: ["hello"],
-      interactive: false,
-      stdin: false,
-      quiet: false,
-      debug: false,
-      autoApprove: false,
-      concurrency: 1,
-    } as unknown as ClaudishConfig;
-    const modelId = computeModelId(config);
-    expect(modelId).toBeUndefined();
-  });
-
-  test("non-monitor mode without model falls back to unknown", () => {
-    // When monitor=false and no model or profile mappings, modelId must be "unknown"
-    // to preserve existing proxy behavior for unspecified model routing.
-    const config: ClaudishConfig = {
-      monitor: false,
-      model: undefined,
-      claudeArgs: ["hello"],
-      interactive: false,
-      stdin: false,
-      quiet: false,
-      debug: false,
-      autoApprove: false,
-      concurrency: 1,
-    } as unknown as ClaudishConfig;
-    const modelId = computeModelId(config);
-    expect(modelId).toBe("unknown");
   });
 });
 

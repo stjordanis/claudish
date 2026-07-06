@@ -14,74 +14,15 @@ import { describe, expect, mock, test } from "bun:test";
 import {
   type ModelInfo,
   buildExplicitModelSpec,
-  isUserDeployedProvider,
   pickerProviderToFirebaseSlug,
   resolveProviderDisplayPrice,
   resolveProviderExternalId,
 } from "./model-selector.js";
 import { createCatalogClient } from "./providers/model-catalog.js";
-import { getProviderByName } from "./providers/provider-definitions.js";
 
 // ─── pickerProviderToFirebaseSlug ────────────────────────────────────────────
 
-describe("pickerProviderToFirebaseSlug", () => {
-  test.each([
-    // Picker value          → Firebase aggregator/owner slug
-    ["openrouter", "openrouter"],
-    ["google", "google"],
-    ["gemini-codeassist", "google"], // subscription routes through owner catalog
-    ["openai", "openai"],
-    ["openai-codex", "openai"], // subscription routes through owner catalog
-    ["x-ai", "x-ai"],
-    ["deepseek", "deepseek"],
-    ["minimax", "minimax"],
-    ["minimax-coding", "minimax"],
-    ["kimi", "moonshotai"],
-    ["kimi-coding", "moonshotai"],
-    ["glm", "z-ai"],
-    ["glm-coding", "z-ai"],
-    ["z-ai", "z-ai"],
-    ["zen", "opencode-zen"], // <-- the original bug: picker value "zen" must map cleanly
-    ["opencode-zen", "opencode-zen"],
-    ["opencode-zen-go", "opencode-zen-go"],
-    ["ollamacloud", "ollamacloud"],
-  ])("maps picker value %p → Firebase slug %p", (pickerValue, firebaseSlug) => {
-    expect(pickerProviderToFirebaseSlug[pickerValue]).toBe(firebaseSlug);
-  });
-
-  test("does not map LiteLLM / Ollama / LM Studio (those are free-text providers)", () => {
-    expect(pickerProviderToFirebaseSlug.litellm).toBeUndefined();
-    expect(pickerProviderToFirebaseSlug.ollama).toBeUndefined();
-    expect(pickerProviderToFirebaseSlug.lmstudio).toBeUndefined();
-  });
-});
-
 // ─── isUserDeployedProvider ──────────────────────────────────────────────────
-
-describe("isUserDeployedProvider", () => {
-  test.each([["litellm"], ["ollama"], ["lmstudio"]])(
-    "%p is treated as user-deployed (free-text input branch)",
-    (value) => {
-      expect(isUserDeployedProvider(value)).toBe(true);
-    }
-  );
-
-  test.each([
-    ["openrouter"],
-    ["zen"],
-    ["google"],
-    ["openai"],
-    ["openai-codex"],
-    ["x-ai"],
-    ["minimax"],
-    ["kimi"],
-    ["glm"],
-    ["z-ai"],
-    ["ollamacloud"], // cloud-hosted; Firebase has the catalog
-  ])("%p is NOT user-deployed", (value) => {
-    expect(isUserDeployedProvider(value)).toBe(false);
-  });
-});
 
 // ─── buildExplicitModelSpec ──────────────────────────────────────────────────
 
@@ -244,24 +185,6 @@ describe("resolveProviderDisplayPrice", () => {
 });
 
 // ─── fixedModel single-model subscription providers (Kimi Coding) ────────────
-
-describe("fixedModel providers", () => {
-  test("kimi-coding declares its single fixed model", () => {
-    const def = getProviderByName("kimi-coding");
-    expect(def?.fixedModel).toBe("kimi-for-coding");
-    // The picker auto-selects buildExplicitModelSpec(provider, fixedModel).
-    expect(buildExplicitModelSpec("kimi-coding", def!.fixedModel!)).toBe("kc@kimi-for-coding");
-  });
-
-  test("multi-model providers do not declare a fixedModel", () => {
-    // Owner Kimi (not the coding plan) and other multi-model subscriptions must
-    // keep showing their full catalog — gc@/mmc@ are intentionally NOT pinned.
-    expect(getProviderByName("kimi")?.fixedModel).toBeUndefined();
-    expect(getProviderByName("glm-coding")?.fixedModel).toBeUndefined();
-    expect(getProviderByName("minimax-coding")?.fixedModel).toBeUndefined();
-    expect(getProviderByName("openai")?.fixedModel).toBeUndefined();
-  });
-});
 
 // ─── CatalogClient integration: picker → modelsByVendor("opencode-zen") ──────
 

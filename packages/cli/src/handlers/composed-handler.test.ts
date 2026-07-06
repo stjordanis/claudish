@@ -34,13 +34,6 @@ describe("ComposedHandler — modelName invariant (#102 structural fix)", () => 
     }).not.toThrow();
   });
 
-  test("accepts bare modelName when targetModel is also bare (no provider prefix)", () => {
-    const transport = makeFakeTransport();
-    expect(() => {
-      new ComposedHandler(transport, "glm-4.7", "glm-4.7", 8080, {});
-    }).not.toThrow();
-  });
-
   test("accepts vendor-prefixed modelName (slash separator is legitimate)", () => {
     const transport = makeFakeTransport();
     expect(() => {

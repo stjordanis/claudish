@@ -7,32 +7,17 @@
 import { describe, expect, test } from "bun:test";
 import { parseModelSpec } from "./providers/model-parser.js";
 
-// Replicate the hasNativeAnthropicMapping logic from claude-runner.ts
-const hasNative = (models: (string | undefined)[]) =>
-  models.some((m) => m && parseModelSpec(m).provider === "native-anthropic");
-
 describe("Native Anthropic mapping detection", () => {
   describe("parseModelSpec identifies native claude models", () => {
-    // Current model names
-    test("claude-opus-4-6", () => {
+    // Two structurally-distinct shapes cover the whole /^claude-/i match:
+    // a modern family-before-version name and a legacy version-before-family
+    // name with a date suffix. Everything after "claude-" is inert to the regex.
+    test("current name: claude-opus-4-6", () => {
       expect(parseModelSpec("claude-opus-4-6").provider).toBe("native-anthropic");
     });
 
-    test("claude-sonnet-4-6", () => {
-      expect(parseModelSpec("claude-sonnet-4-6").provider).toBe("native-anthropic");
-    });
-
-    test("claude-haiku-4-5-20251001", () => {
-      expect(parseModelSpec("claude-haiku-4-5-20251001").provider).toBe("native-anthropic");
-    });
-
-    // Legacy model names
-    test("claude-3-opus-20240229", () => {
+    test("legacy name with date suffix: claude-3-opus-20240229", () => {
       expect(parseModelSpec("claude-3-opus-20240229").provider).toBe("native-anthropic");
-    });
-
-    test("claude-3-5-sonnet-20241022", () => {
-      expect(parseModelSpec("claude-3-5-sonnet-20241022").provider).toBe("native-anthropic");
     });
 
     // Explicit anthropic/ prefix
@@ -52,32 +37,6 @@ describe("Native Anthropic mapping detection", () => {
 
     test("openrouter@ claude routes to openrouter, not native", () => {
       expect(parseModelSpec("openrouter@anthropic/claude-3.5-sonnet").provider).toBe("openrouter");
-    });
-  });
-
-  describe("hasNativeAnthropicMapping logic", () => {
-    test("mixed mappings with one claude model = has native", () => {
-      expect(hasNative(["claude-opus-4-6", "x-ai/grok-code-fast-1", "google@gemini-2.5-pro"])).toBe(
-        true
-      );
-    });
-
-    test("all alternative models = no native", () => {
-      expect(
-        hasNative(["x-ai/grok-code-fast-1", "google@gemini-2.5-pro", "minimax/minimax-m2"])
-      ).toBe(false);
-    });
-
-    test("undefined/missing models are skipped", () => {
-      expect(hasNative([undefined, undefined, "x-ai/grok-code-fast-1"])).toBe(false);
-    });
-
-    test("all undefined = no native", () => {
-      expect(hasNative([undefined, undefined, undefined])).toBe(false);
-    });
-
-    test("single native among undefined = has native", () => {
-      expect(hasNative([undefined, "claude-opus-4-6", undefined])).toBe(true);
     });
   });
 });

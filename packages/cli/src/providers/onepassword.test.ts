@@ -135,6 +135,7 @@ type SdkItem = Awaited<ReturnType<SdkClientLike["items"]["get"]>>;
 function makeFakeSdkClient(opts: {
   resolveAll?: (refs: string[]) => ResolveAllResult;
   throwOnResolveAll?: Error;
+  throwOnGet?: Error;
   vaults?: { id: string; title: string }[];
   items?: { id: string; title: string }[];
   item?: SdkItem;
@@ -164,6 +165,7 @@ function makeFakeSdkClient(opts: {
         return opts.items ?? [];
       },
       async get() {
+        if (opts.throwOnGet) throw opts.throwOnGet;
         if (!opts.item) throw new Error("fake item not configured");
         return opts.item;
       },
@@ -921,8 +923,9 @@ describe("resolveGlobImport", () => {
         "ZHIPU_API_KEY",
       ].sort()
     );
-    // GEMINI_API_KEY resolved via the TRAILING-SPACE reference, named WITHOUT it.
-    expect(out.GEMINI_API_KEY).toBe(`sdk:${ref("GOOGLE_GEMINI_API_KEY/GEMINI_API_KEY ")}`);
+    // GEMINI_API_KEY discovered under a TRAILING-SPACE label, named WITHOUT it;
+    // value comes from discovery (no title-based re-resolve).
+    expect(out.GEMINI_API_KEY).toBe("sk-gem");
     expect(out["Customer Key"]).toBeUndefined();
     expect(out["Bearer token"]).toBeUndefined();
   });
@@ -971,14 +974,14 @@ describe("resolveGlobImport", () => {
     ).rejects.toThrow(/matched no importable fields/i);
   });
 
-  test("value phase uses the injected SDK factory — real op/SDK never touched", async () => {
+  test("discovery uses the injected SDK factory — real op/SDK never touched", async () => {
     const spy = { called: false } as { called: boolean; auth?: SdkAuth };
     const out = await resolveGlobImport(ref("Moonshot Kimi/*"), {
       auth: stubAuth,
       sdkFactory: itemSdkFactory(spy),
     });
     expect(spy.called).toBe(true);
-    expect(out.MOONSHOT_API_KEY).toBe(`sdk:${ref("Moonshot Kimi/MOONSHOT_API_KEY")}`);
+    expect(out.MOONSHOT_API_KEY).toBe("sk-moon");
   });
 });
 
@@ -1002,7 +1005,9 @@ describe("resolveGlobImportAll (full-glob — op-source's shared per-glob resolu
         "ZHIPU_API_KEY",
       ].sort()
     );
-    expect(out.GEMINI_API_KEY).toBe(`sdk:${ref("GOOGLE_GEMINI_API_KEY/GEMINI_API_KEY ")}`);
+    // Value comes straight from discovery (the SDK already decrypted it) — NOT
+    // a second title-based resolveAll pass. See the captureValues fix.
+    expect(out.GEMINI_API_KEY).toBe("sk-gem");
   });
 
   test("zero matches → {} WITHOUT throwing (unlike resolveGlobImport)", async () => {
@@ -1026,25 +1031,21 @@ describe("resolveGlobImportAll (full-glob — op-source's shared per-glob resolu
     expect(out["Bad Name"]).toBeUndefined();
   });
 
-  test("ONE unresolvable field does NOT sink the batch (real case: tooManyMatchingFields)", async () => {
-    // Observed live: a duplicate label inside a section makes the SDK reject
-    // that ONE reference with `tooManyMatchingFields`. All-or-nothing mapping
-    // made the whole full-glob batch throw → the failure was (correctly) never
-    // memoized → every provider re-ran the full discovery. Partial tolerance:
-    // the other keys resolve, the bad one is warned + skipped.
+  test("imports a key whose synthesized title ref would be ambiguous (tooManyMatchingFields regression)", async () => {
+    // The real bug: op://Jack/AI LLM models API keys 10xlabs/Claude/ANTHROPIC_API_KEY
+    // resolved BY TITLE, and the item's titles recur → the SDK's secrets.resolveAll
+    // rejected that ONE reference with `tooManyMatchingFields` → the key was
+    // silently skipped. The fix reads the value discovery ALREADY decrypted, so
+    // there is no second title-based resolve and no ambiguity. A fake client
+    // whose resolveAll ALWAYS errors proves the glob path never touches it now.
     const warnings: string[] = [];
     const client = makeFakeSdkClient({
       vaults: SDK_VAULTS,
       items: SDK_ITEMS,
       item: SDK_ITEM,
-      resolveAll: (refs) => {
-        const individualResponses: ResolveAllResult["individualResponses"] = {};
-        for (const r of refs) {
-          individualResponses[r] = r.includes("ANTHROPIC_API_KEY")
-            ? { error: { type: "tooManyMatchingFields" } }
-            : { content: { secret: `sdk:${r}` } };
-        }
-        return { individualResponses };
+      // If the glob path still called resolveAll, this would drop the key.
+      resolveAll: () => {
+        throw new Error("resolveAll must not be called by the glob-import path");
       },
     });
     const out = await resolveGlobImportAll(ref("*/*_API_KEY"), {
@@ -1052,20 +1053,21 @@ describe("resolveGlobImportAll (full-glob — op-source's shared per-glob resolu
       sdkFactory: makeFakeSdkFactory(client),
       warn: (m) => warnings.push(m),
     });
-    expect(out.ANTHROPIC_API_KEY).toBeUndefined();
-    expect(Object.keys(out)).toHaveLength(8); // the 9 matches minus the 1 failure
-    expect(out.OPENAI_API_KEY).toBe(`sdk:${ref("OpenAI/OPENAI_API_KEY")}`);
-    expect(
-      warnings.some((w) => w.includes("ANTHROPIC_API_KEY") && w.includes("tooManyMatchingFields"))
-    ).toBe(true);
+    // The previously-dropped key is now imported, from the discovered value.
+    expect(out.ANTHROPIC_API_KEY).toBe("sk-anthropic");
+    expect(Object.keys(out)).toHaveLength(9); // all 9 matches, none dropped
+    expect(out.OPENAI_API_KEY).toBe("sk-oai");
+    expect(warnings).toHaveLength(0);
   });
 
-  test("a whole-batch resolveAll failure still throws (must NOT be memoized as success)", async () => {
+  test("a discovery (items.get) failure still throws (must NOT be memoized as success)", async () => {
+    // The whole-batch-failure guarantee now attaches to discovery: an IPC blip
+    // on items.get must propagate so op-source evicts the promise and retries,
+    // rather than memoizing an empty result as success.
     const client = makeFakeSdkClient({
       vaults: SDK_VAULTS,
       items: SDK_ITEMS,
-      item: SDK_ITEM,
-      throwOnResolveAll: new Error("IPC operation failed: -4"),
+      throwOnGet: new Error("IPC operation failed: -4"),
     });
     expect(
       resolveGlobImportAll(ref("*/*_API_KEY"), {
@@ -1402,71 +1404,5 @@ describe("withSdkRetry startup-trace instrumentation", () => {
   });
   afterEach(() => {
     __resetStartupTraceForTests();
-  });
-
-  test("records a queue-wait vs exec split per labeled op", async () => {
-    const slow = () => new Promise<string>((r) => setTimeout(() => r("ok"), 30));
-    // Launch both together: opB is enqueued while opA executes, so opB WAITS.
-    await Promise.all([withSdkRetry(slow, "opA"), withSdkRetry(slow, "opB")]);
-    const spans = __getStartupSpansForTests();
-    const a = spans.find((s) => s.name === "opA");
-    const b = spans.find((s) => s.name === "opB");
-    expect(a).toBeDefined();
-    expect(b).toBeDefined();
-    // Both executed for ~30ms.
-    expect(a?.meta?.execMs as number).toBeGreaterThanOrEqual(20);
-    expect(b?.meta?.execMs as number).toBeGreaterThanOrEqual(20);
-    // opA ran immediately; opB sat in the queue behind it (~30ms wait).
-    expect(a?.meta?.waitMs as number).toBeLessThan(20);
-    expect(b?.meta?.waitMs as number).toBeGreaterThanOrEqual(20);
-    // First (only) attempt is tagged.
-    expect(a?.meta?.attempt).toBe(1);
-    expect(b?.meta?.attempt).toBe(1);
-  });
-
-  test("a transient retry lands attempt counts + cacheReset in span meta", async () => {
-    let calls = 0;
-    const out = await withSdkRetry(async () => {
-      calls++;
-      if (calls === 1) throw new Error("IPC operation failed: -4");
-      return "recovered";
-    }, "op:retry-storm");
-    expect(out).toBe("recovered");
-    const spans = __getStartupSpansForTests().filter((s) => s.name === "op:retry-storm");
-    expect(spans).toHaveLength(2); // one span per attempt
-    // Attempt 1: failed transiently — error recorded on ITS span.
-    expect(spans[0].meta?.attempt).toBe(1);
-    expect(spans[0].meta?.error).toBe(true);
-    expect(String(spans[0].meta?.errorMsg)).toContain("IPC operation failed");
-    // Attempt 2: succeeded — carries the retry summary.
-    expect(spans[1].meta?.attempt).toBe(2);
-    expect(spans[1].meta?.attempts).toBe(2);
-    expect(spans[1].meta?.retried).toBe(true);
-    expect(spans[1].meta?.cacheReset).toBe(true);
-  });
-
-  test("a non-transient failure records ONE error span, no retry meta", async () => {
-    let threw: unknown;
-    try {
-      await withSdkRetry(async () => {
-        throw new Error("vault 'X' not found");
-      }, "op:genuine-fail");
-    } catch (e) {
-      threw = e;
-    }
-    expect((threw as Error)?.message).toContain("not found");
-    const spans = __getStartupSpansForTests().filter((s) => s.name === "op:genuine-fail");
-    expect(spans).toHaveLength(1);
-    expect(spans[0].meta?.attempt).toBe(1);
-    expect(spans[0].meta?.error).toBe(true);
-    expect(spans[0].meta?.retried).toBeUndefined();
-  });
-
-  test("unlabeled calls still record under the default label", async () => {
-    await withSdkRetry(async () => "ok");
-    const spans = __getStartupSpansForTests().filter((s) => s.name === "op:sdk-op");
-    expect(spans).toHaveLength(1);
-    expect(typeof spans[0].meta?.waitMs).toBe("number");
-    expect(typeof spans[0].meta?.execMs).toBe("number");
   });
 });

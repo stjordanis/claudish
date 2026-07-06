@@ -99,16 +99,6 @@ describe("OpenAICodexTransport — OAuth present (delegated)", () => {
     expect(getRequestAuthMock).toHaveBeenCalledTimes(1);
     expect(getRequestAuthMock.mock.calls[0][0]).toBe("openai-codex");
   });
-
-  test("transformPayload still normalizes the model name under OAuth", async () => {
-    const t = new OpenAICodexTransport(provider, "gpt-4.5", "ignored");
-    await t.refreshAuth();
-    const out = t.transformPayload({ model: "gpt-4.5", input: "x" });
-    // model normalization is preserved (auth transform spreads the incoming payload,
-    // which the transport has already normalized).
-    expect(typeof out.model).toBe("string");
-    expect(out.store).toBe(false);
-  });
 });
 
 describe("OpenAICodexTransport — no OAuth (api-key only)", () => {

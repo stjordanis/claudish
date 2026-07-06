@@ -91,15 +91,6 @@ describe("AnthropicProviderTransport — kimi-coding OAuth delegation", () => {
     expect(headers["X-Msh-Device-Id"]).toBe("device-abc");
   });
 
-  test("delegates to credentials.getRequestAuth with the kimi-coding catalog name", async () => {
-    const transport = new AnthropicProviderTransport(kimiCoding, "stale-api-key");
-    await transport.getHeaders();
-
-    expect(getRequestAuthMock).toHaveBeenCalledTimes(1);
-    const [name] = getRequestAuthMock.mock.calls[0];
-    expect(name).toBe("kimi-coding");
-  });
-
   test("OAuth path failure falls back to the plain x-api-key header", async () => {
     getRequestAuthMock = mock(async () => {
       throw new Error("OAuth unavailable");

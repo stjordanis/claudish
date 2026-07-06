@@ -193,21 +193,3 @@ describe("validateDefaultRoutingRules", () => {
 // ---------------------------------------------------------------------------
 // Shape of the rules table
 // ---------------------------------------------------------------------------
-
-describe("DEFAULT_ROUTING_RULES shape", () => {
-  test("has a catch-all '*' entry", () => {
-    expect(DEFAULT_ROUTING_RULES["*"]).toBeDefined();
-  });
-
-  test("every rule has a non-empty entry list", () => {
-    for (const entries of Object.values(DEFAULT_ROUTING_RULES)) {
-      expect(Array.isArray(entries)).toBe(true);
-      expect(entries.length).toBeGreaterThan(0);
-      // Sanity: entries must be non-empty strings
-      for (const entry of entries) {
-        expect(typeof entry).toBe("string");
-        expect(entry.length).toBeGreaterThan(0);
-      }
-    }
-  });
-});

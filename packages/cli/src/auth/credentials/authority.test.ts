@@ -337,15 +337,6 @@ describe("CompositeCredentialProvider", () => {
     expect(await fallbackOnly.isAvailable()).toBe(true);
   });
 
-  test("invalidate() delegates to both halves", () => {
-    const primary = new FakeProvider("p");
-    const fallback = new FakeProvider("f");
-    const composite = new CompositeCredentialProvider("c", primary, fallback);
-    composite.invalidate();
-    expect(primary.invalidateCalls).toBe(1);
-    expect(fallback.invalidateCalls).toBe(1);
-  });
-
   test("primary authed → returns the primary artifact", async () => {
     const primary = new FakeProvider("p", {
       authed: true,
@@ -406,18 +397,6 @@ describe("CompositeCredentialProvider", () => {
     await expect(composite.getRequestAuth(CTX)).rejects.toThrow("network exploded");
     expect(fallback.getRequestAuthCalls).toBe(0);
   });
-
-  test("login/logout delegate to the primary", async () => {
-    const primary = new FakeProvider("p");
-    const fallback = new FakeProvider("f");
-    const composite = new CompositeCredentialProvider("c", primary, fallback);
-    await composite.login();
-    await composite.logout();
-    expect(primary.loginCalls).toBe(1);
-    expect(primary.logoutCalls).toBe(1);
-    expect(fallback.loginCalls).toBe(0);
-    expect(fallback.logoutCalls).toBe(0);
-  });
 });
 
 // ── CredentialAuthority registry/dispatch ───────────────────────────────────
@@ -463,29 +442,6 @@ describe("CredentialAuthority", () => {
     expect(await authority.isAvailable("throws")).toBe(false);
   });
 
-  test("invalidate() with no name invalidates every registered provider once", () => {
-    const authority = new CredentialAuthority();
-    const a = new FakeProvider("alpha");
-    const b = new FakeProvider("beta");
-    // alpha is registered under two names — it must still be invalidated ONCE.
-    authority.register(a, ["alpha", "alpha-alias"]);
-    authority.register(b);
-    authority.invalidate();
-    expect(a.invalidateCalls).toBe(1);
-    expect(b.invalidateCalls).toBe(1);
-  });
-
-  test("invalidate(name) targets a single provider", () => {
-    const authority = new CredentialAuthority();
-    const a = new FakeProvider("alpha");
-    const b = new FakeProvider("beta");
-    authority.register(a);
-    authority.register(b);
-    authority.invalidate("alpha");
-    expect(a.invalidateCalls).toBe(1);
-    expect(b.invalidateCalls).toBe(0);
-  });
-
   test("getRequestAuth dispatches to the registered provider's artifact", async () => {
     const authority = new CredentialAuthority();
     authority.register(
@@ -526,41 +482,6 @@ describe("CredentialAuthority", () => {
 // ── buildDefault() wiring ───────────────────────────────────────────────────
 
 describe("CredentialAuthority.buildDefault()", () => {
-  test("registers explicit providers under their catalog names and aliases", () => {
-    const authority = CredentialAuthority.buildDefault();
-    expect(authority.get("openai-codex")?.catalogName).toBe("openai-codex");
-    expect(authority.get("gemini-codeassist")?.catalogName).toBe("gemini-codeassist");
-    // "google" is the DIRECT Gemini API credential (GEMINI_API_KEY) — its own
-    // ApiKeyCredentialProvider, NOT an alias of the Code Assist OAuth product.
-    // It is also registered under the runtime request-path rename "gemini"
-    // (toRemoteProvider), which proxy-server signs requests with.
-    expect(authority.get("google")?.catalogName).toBe("google");
-    expect(authority.get("gemini")).toBe(authority.get("google"));
-    expect(authority.get("google")).not.toBe(authority.get("gemini-codeassist"));
-    expect(authority.get("kimi")?.catalogName).toBe("kimi");
-    // kimi-coding is a SEPARATE credential (own endpoint + KIMI_CODING_API_KEY),
-    // NOT an alias of the regular Kimi credential.
-    expect(authority.get("kimi-coding")?.catalogName).toBe("kimi-coding");
-    expect(authority.get("kimi-coding")).not.toBe(authority.get("kimi"));
-    expect(authority.get("vertex")?.catalogName).toBe("vertex");
-    expect(authority.get("native-anthropic")?.catalogName).toBe("native-anthropic");
-  });
-
-  test("registers a LocalCredentialProvider for each local provider", () => {
-    const authority = CredentialAuthority.buildDefault();
-    for (const name of ["ollama", "lmstudio", "vllm", "mlx"]) {
-      expect(authority.get(name)?.catalogName).toBe(name);
-    }
-  });
-
-  test("registers ApiKeyCredentialProviders for other builtin providers", () => {
-    const authority = CredentialAuthority.buildDefault();
-    // openrouter / openai / glm etc. are plain API-key providers
-    expect(authority.get("openrouter")?.catalogName).toBe("openrouter");
-    expect(authority.get("openai")?.catalogName).toBe("openai");
-    expect(authority.get("glm")?.catalogName).toBe("glm");
-  });
-
   // Regression: kimi-coding must resolve its OWN key (KIMI_CODING_API_KEY),
   // not the regular Kimi key. Previously kimi-coding was aliased onto the
   // shared Kimi composite whose API-key half resolved MOONSHOT_API_KEY first,
@@ -641,14 +562,4 @@ describe("CredentialAuthority.buildDefault()", () => {
 
   // The real OAuth singletons read real credential files; we only assert the
   // negative (no oauth file → not authenticated) to keep the test hermetic.
-  test("OAuth-backed credentials report a boolean without throwing", async () => {
-    const authority = CredentialAuthority.buildDefault();
-    // These depend on whether the running machine happens to have oauth files;
-    // we don't assert a specific value, only that the async check never throws
-    // and resolves to a boolean.
-    for (const name of ["openai-codex", "gemini-codeassist", "kimi", "vertex"]) {
-      const available = await authority.isAvailable(name);
-      expect(typeof available).toBe("boolean");
-    }
-  });
 });

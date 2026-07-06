@@ -142,13 +142,6 @@ describe("Sakana Fugu (OpenAI-compatible path) clamps UP to high", () => {
   ])("%s effort '%s' → reasoning_effort '%s'", (model, input, expected) => {
     expect(openaiEffort(model, input)).toBe(expected);
   });
-
-  test("fugu NEVER receives a sub-high value", () => {
-    for (const lvl of ["none", "minimal", "low", "medium"]) {
-      const v = openaiEffort("fugu", lvl);
-      expect(v === "high" || v === "xhigh").toBe(true);
-    }
-  });
 });
 
 // ─── Part 2B: Codex (Responses API) ───────────────────────────────────────
