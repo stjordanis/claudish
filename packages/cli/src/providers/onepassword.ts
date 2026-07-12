@@ -139,6 +139,21 @@ export interface DiscoveredField {
   hasValue: boolean;
   /** The LAST 4 chars of the value (for "••••1234" display), or "" when none. */
   valueTail: string;
+  /**
+   * The FULL decrypted value — populated ONLY when discovery is called with
+   * `captureValues: true` (the glob-IMPORT path, which needs the value anyway
+   * and already pays the in-process decrypt). It is `undefined` on every
+   * display/preview call, preserving the "keep no full value" posture there.
+   *
+   * Why this exists: the SDK returns each field's decrypted `value` during
+   * discovery. Re-resolving a synthesized title-based `op://Vault/Item/Section/
+   * Title` reference through `secrets.resolveAll()` afterwards is ambiguous —
+   * 1Password matches the reference BY TITLE, so a title that recurs across the
+   * item fails with `tooManyMatchingFields` and the key is silently skipped.
+   * Carrying the value the SDK already decrypted removes that second round-trip
+   * and the whole class of title-collision failures.
+   */
+  value?: string;
 }
 
 /** Last 4 chars of a secret, for masked-tail display (empty for short/empty). */
@@ -253,6 +268,12 @@ export async function discoverItemFields(
     env?: NodeJS.ProcessEnv;
     /** Override the stderr warn sink (tests capture warnings). */
     warn?: (msg: string) => void;
+    /**
+     * Populate `DiscoveredField.value` with the full decrypted value the SDK
+     * already returns. ONLY the glob-import path sets this — display/preview
+     * callers leave it false so no full value is retained. See DiscoveredField.
+     */
+    captureValues?: boolean;
   } = {}
 ): Promise<DiscoveredField[]> {
   const warn = opts.warn ?? ((m: string) => console.error(m));
@@ -315,6 +336,7 @@ export async function discoverItemFields(
       type: typeof field.fieldType === "string" ? field.fieldType : String(field.fieldType ?? ""),
       hasValue: !!field.value,
       valueTail: valueTail(field.value),
+      value: opts.captureValues && typeof field.value === "string" ? field.value : undefined,
     });
   }
   return out;
@@ -481,25 +503,32 @@ export async function resolveGlobImport(
 ): Promise<Record<string, string>> {
   const warn = opts.warn ?? ((m: string) => console.error(m));
   const glob = parseGlobImport(opPath);
+  // captureValues: read each field's already-decrypted value from discovery so
+  // we never re-resolve the synthesized title-based reference (which is
+  // ambiguous for items with recurring field titles → `tooManyMatchingFields`).
   const fields = await discoverItemFields(glob.vault, glob.item, {
     sdkFactory: opts.sdkFactory,
     auth: opts.auth,
     env: opts.env,
     warn,
+    captureValues: true,
   });
   const matches = filterGlobFields(fields, glob);
 
-  // Build the resolve map from VALID matches; warn+skip invalid ones.
-  const refMap: Record<string, string> = {};
+  // Build the result directly from the discovered values; warn+skip invalid
+  // names. A valid-name field with no value is skipped (nothing to import).
+  const resolved: Record<string, string> = {};
+  let importable = 0;
   for (const m of matches) {
     if (!m.valid) {
       warn(`[claudish] skipped 1Password field '${m.field.label}' (not a valid env var name)`);
       continue;
     }
-    refMap[m.envName] = m.field.reference;
+    importable++;
+    if (typeof m.field.value === "string") resolved[m.envName] = m.field.value;
   }
 
-  if (Object.keys(refMap).length === 0) {
+  if (importable === 0) {
     const available = fields
       .map((f) => f.label.trim())
       .filter((l) => l !== "")
@@ -510,18 +539,14 @@ export async function resolveGlobImport(
     );
   }
 
-  return resolveSecrets(refMap, {
-    sdkFactory: opts.sdkFactory,
-    auth: opts.auth,
-    env: opts.env,
-  });
+  return resolved;
 }
 
 /**
  * Resolve a glob field-import path into ALL its valid `{ envVarName: value }`
  * pairs — the FULL-glob variant used by op-source's shared per-glob resolution.
  *
- * Same pipeline as resolveGlobImport (discover ONCE → filter → batch resolve)
+ * Same pipeline as resolveGlobImport (discover ONCE → filter → read values)
  * but NON-THROWING on zero matches: `{}` is a legitimate, memoizable outcome
  * for the lazy credential path (the old per-credential
  * resolveGlobImportForEnvVars also returned `{}` silently there — a throw here
@@ -529,11 +554,14 @@ export async function resolveGlobImport(
  * re-running discovery once per provider). Invalid env-var names are skipped
  * silently (callers pass a quiet warn on this path).
  *
- * PARTIAL-TOLERANT resolve: the value phase uses resolveSecretsPartial, so ONE
- * unresolvable field (e.g. `tooManyMatchingFields` from a duplicate label in a
- * section — observed in real items) doesn't sink the item's other keys; each
- * failure is reported through `warn`. Whole-batch failures (no auth, discovery
- * error, SDK/IPC failure) still propagate — those must NOT be memoized.
+ * VALUES COME FROM DISCOVERY (captureValues): each matched field's value is the
+ * one the SDK already decrypted while listing the item — NOT a second
+ * `secrets.resolveAll()` pass on a synthesized title-based reference. That
+ * second pass matched fields BY TITLE and failed with `tooManyMatchingFields`
+ * on any item whose field titles recur (observed in real items), silently
+ * dropping the key. Reading the discovered value removes that whole failure
+ * class. A matched field with no value is skipped; whole-batch failures (no
+ * auth, discovery/IPC error) still propagate — those must NOT be memoized.
  */
 export async function resolveGlobImportAll(
   opPath: string,
@@ -547,31 +575,27 @@ export async function resolveGlobImportAll(
 ): Promise<Record<string, string>> {
   const warn = opts.warn ?? ((m: string) => console.error(m));
   const glob = parseGlobImport(opPath);
+  // captureValues: use the values discovery already decrypted (one SDK call)
+  // rather than a second title-based resolveAll pass, which fails with
+  // `tooManyMatchingFields` on any item whose field titles recur.
   const fields = await discoverItemFields(glob.vault, glob.item, {
     sdkFactory: opts.sdkFactory,
     auth: opts.auth,
     env: opts.env,
     warn,
+    captureValues: true,
   });
   const matches = filterGlobFields(fields, glob);
 
-  const refMap: Record<string, string> = {};
+  const resolved: Record<string, string> = {};
   for (const m of matches) {
     if (!m.valid) continue;
-    refMap[m.envName] = m.field.reference;
+    // A valid-name field with no captured value is silently skipped — matches
+    // the previous partial-resolve semantics (one empty field ≠ batch failure).
+    if (typeof m.field.value === "string") resolved[m.envName] = m.field.value;
   }
 
   // Zero importable matches → {} (memoizable, non-throwing — see docblock).
-  if (Object.keys(refMap).length === 0) return {};
-
-  const { resolved, failures } = await resolveSecretsPartial(refMap, {
-    sdkFactory: opts.sdkFactory,
-    auth: opts.auth,
-    env: opts.env,
-  });
-  for (const f of failures) {
-    warn(`[claudish] 1Password glob field could not be resolved (skipped): ${f}`);
-  }
   return resolved;
 }
 
@@ -611,30 +635,27 @@ export async function resolveGlobImportForEnvVars(
 
   const warn = opts.warn ?? ((m: string) => console.error(m));
   const glob = parseGlobImport(opPath);
+  // captureValues: the seeking filter runs against the values discovery already
+  // decrypted — never a second title-based resolve (ambiguous → tooManyMatchingFields).
   const fields = await discoverItemFields(glob.vault, glob.item, {
     sdkFactory: opts.sdkFactory,
     auth: opts.auth,
     env: opts.env,
     warn,
+    captureValues: true,
   });
   const matches = filterGlobFields(fields, glob);
 
   // Keep ONLY valid matches whose env name is one we're seeking.
-  const refMap: Record<string, string> = {};
+  const resolved: Record<string, string> = {};
   for (const m of matches) {
     if (!m.valid) continue;
     if (!wanted.has(m.envName)) continue;
-    refMap[m.envName] = m.field.reference;
+    if (typeof m.field.value === "string") resolved[m.envName] = m.field.value;
   }
 
   // Nothing wanted matched → return empty (this glob doesn't hold the key).
-  if (Object.keys(refMap).length === 0) return {};
-
-  return resolveSecrets(refMap, {
-    sdkFactory: opts.sdkFactory,
-    auth: opts.auth,
-    env: opts.env,
-  });
+  return resolved;
 }
 
 // ===========================================================================

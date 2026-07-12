@@ -53,7 +53,7 @@ try {
       `✓ search_models("grok"): ${found ? "found grok models" : "no results"} (${searchText.length} chars)`
     );
   } catch (e: any) {
-    console.log(`⚠ search_models: ${e.message?.slice(0, 60) || "failed"}`);
+    console.log(`! search_models: ${e.message?.slice(0, 60) || "failed"}`);
   }
 
   // 4. team — status on nonexistent path (should error)
