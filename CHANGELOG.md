@@ -6,7 +6,11 @@ All notable changes to [Claudish](https://github.com/MadAppGang/claudish).
 
 ### Bug Fixes
 
-- 1Password glob import silently dropped keys on items with recurring field titles *(onepassword)* — the glob-import path discovered fields, then did a second `secrets.resolveAll()` pass on a synthesized title-based `op://` reference. 1Password matches that reference by title, so any item with duplicate field titles failed with `tooManyMatchingFields` and the key was dropped. Discovery now carries the value the SDK already decrypted (`captureValues`), eliminating the second round-trip and the entire title-collision failure class.
+- v7.12.2 — 1Password glob import drops keys on recurring field titles([`8bb4f9a`](https://github.com/MadAppGang/claudish/commit/8bb4f9a4226dd34fd825e5ce4f12931aaa06fe69))
+
+### Documentation
+
+- update CHANGELOG.md for v7.12.1([`c6e831d`](https://github.com/MadAppGang/claudish/commit/c6e831dceb8b145e9a7792bee730d845292c7823))
 
 ## [7.12.1] - 2026-07-06
 
