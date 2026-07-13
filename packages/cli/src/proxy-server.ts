@@ -712,6 +712,13 @@ export async function createProxyServer(
   app.post("/v1/messages", async (c) => {
     try {
       const body = await c.req.json();
+      // Request-metadata trace (debug log only — the [RequestMeta] prefix is
+      // NOT structural-log-worthy, so it never reaches the always-on redacted
+      // log). Captures the three fields claudish otherwise never reads, to
+      // diff ultracode vs plain-xhigh sessions for a wire-level marker.
+      log(
+        `[RequestMeta] model=${body.model} output_config=${JSON.stringify(body.output_config) ?? "(none)"} metadata=${JSON.stringify(body.metadata) ?? "(none)"} anthropic-beta=${c.req.header("anthropic-beta") ?? "(none)"}`
+      );
       const handler = await getHandlerForRequest(body.model);
 
       // Route

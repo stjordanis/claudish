@@ -111,8 +111,35 @@ const geminiCodeAssistProfile: ProviderProfile = {
   },
 };
 
+/**
+ * Models that reject function tools + reasoning_effort on /v1/chat/completions
+ * (OpenAI 400: "use /v1/responses or set reasoning_effort to 'none'"). This is
+ * a PER-MODEL constraint, not family-wide. TEMPORARY name gate — replaced by
+ * the catalog capability record (endpoints.openai.toolsWithReasoning ===
+ * "requires-responses") once route-time capability fetch lands.
+ */
+function requiresResponsesApi(modelName: string): boolean {
+  return /^gpt-5\.6/.test(modelName.toLowerCase());
+}
+
 const openaiProfile: ProviderProfile = {
   createHandler(ctx) {
+    // Claude Code always sends tools, so requires-responses models must get the
+    // whole Responses-API slice (endpoint + CodexAPIFormat payload + responses
+    // SSE) swapped together — same composition the Zen profile uses for gpt-*.
+    if (requiresResponsesApi(ctx.modelName)) {
+      const responsesProvider = { ...ctx.provider, apiPath: "/v1/responses" };
+      const transport = new OpenAIProviderTransport(responsesProvider, ctx.modelName, ctx.apiKey);
+      const adapter = new CodexAPIFormat(ctx.modelName);
+      const handler = new ComposedHandler(transport, ctx.targetModel, ctx.modelName, ctx.port, {
+        adapter,
+        tokenStrategy: "delta-aware",
+        ...ctx.sharedOpts,
+      });
+      log(`[Proxy] Created OpenAI handler (Responses API composed): ${ctx.modelName}`);
+      return handler;
+    }
+
     const transport = new OpenAIProviderTransport(ctx.provider, ctx.modelName, ctx.apiKey);
     const adapter = new OpenAIAPIFormat(ctx.modelName);
     const handler = new ComposedHandler(transport, ctx.targetModel, ctx.modelName, ctx.port, {

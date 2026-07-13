@@ -150,14 +150,23 @@ export class CodexAPIFormat extends BaseAPIFormat {
     return value;
   }
 
-  /** gpt-5.1-codex-max (and later codex-max) — the only codex models accepting xhigh. */
+  /** gpt-5.1-codex-max (and later codex-max), plus the gpt-5.6 family —
+   *  the models accepting xhigh on the Responses API. */
   private acceptsXhigh(): boolean {
-    return /codex.*max/.test(this.modelId.toLowerCase());
+    const m = this.modelId.toLowerCase();
+    return /codex.*max/.test(m) || /gpt-5\.6/.test(m);
   }
 
-  /** gpt-5.1-codex family (5.1+) — accepts `none`. */
+  /** gpt-5.6 family — first OpenAI models with a native `max` effort
+   *  (catalog-confirmed: efforts=[max,xhigh,high,medium,low,none]). */
+  private acceptsMax(): boolean {
+    return /gpt-5\.6/.test(this.modelId.toLowerCase());
+  }
+
+  /** gpt-5.1+ codex family and the gpt-5.6 family — accept `none`. */
   private isCodex51Plus(): boolean {
-    return /gpt-5\.[1-9].*codex/.test(this.modelId.toLowerCase());
+    const m = this.modelId.toLowerCase();
+    return /gpt-5\.[1-9].*codex/.test(m) || /gpt-5\.6/.test(m);
   }
 
   private clampCodexEffort(level: EffortLevel): string {
@@ -174,7 +183,9 @@ export class CodexAPIFormat extends BaseAPIFormat {
       case "xhigh":
         return this.acceptsXhigh() ? "xhigh" : "high";
       case "max":
-        return this.acceptsXhigh() ? "xhigh" : "high"; // no `max` on codex
+        // gpt-5.6 takes native max; older codex has no max → xhigh/high.
+        if (this.acceptsMax()) return "max";
+        return this.acceptsXhigh() ? "xhigh" : "high";
       default:
         return "medium";
     }
