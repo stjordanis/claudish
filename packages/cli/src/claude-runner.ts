@@ -434,8 +434,12 @@ export async function runClaudeWithProxy(
     claudeArgs.push(...config.claudeArgs);
   } else {
     // Single-shot mode - add all arguments
-    // Add -p flag FIRST to enable headless/print mode (non-interactive, exits after task)
-    claudeArgs.push("-p");
+    // Add -p flag FIRST to enable headless/print mode (non-interactive, exits after task).
+    // Skip if the caller already passed -p/--print through (they are synonyms; adding
+    // both is harmless to Claude Code but produces a confusing duplicated arg line).
+    if (!config.claudeArgs.includes("-p") && !config.claudeArgs.includes("--print")) {
+      claudeArgs.push("-p");
+    }
     if (config.autoApprove) {
       claudeArgs.push("--dangerously-skip-permissions");
     }
@@ -522,10 +526,18 @@ export async function runClaudeWithProxy(
     }
   }
 
-  // Helper function to log messages (respects quiet flag)
+  // Helper function to log claudish's own chatter (respects quiet flag).
+  // In single-shot/print mode, stdout belongs to Claude Code's machine-readable
+  // output (e.g. --output-format stream-json, parsed line-by-line by consumers
+  // like madbench), so claudish must never write to it. Route to stderr instead —
+  // humans read stderr equally well. Interactive mode keeps stdout.
   const log = (message: string) => {
     if (!config.quiet) {
-      console.log(message);
+      if (config.interactive) {
+        console.log(message);
+      } else {
+        console.error(message);
+      }
     }
   };
 
@@ -671,7 +683,9 @@ function setupSignalHandlers(
   for (const signal of signals) {
     process.on(signal, () => {
       if (!quiet) {
-        console.log(`\n[claudish] Received ${signal}, shutting down...`);
+        // stderr: this is claudish's own diagnostic chatter and must not land
+        // on stdout, which may carry Claude Code's machine-readable output.
+        console.error(`\n[claudish] Received ${signal}, shutting down...`);
       }
       proc.kill();
       // Run optional cleanup before exit

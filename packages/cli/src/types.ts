@@ -47,6 +47,7 @@ export interface ClaudishConfig {
   claudeArgs: string[];
   _hasPositionalPrompt?: boolean; // Internal: true when a positional prompt arg was found (not a flag value)
   _hasPrintFlag?: boolean; // Internal: true when a passthrough -p/--print flag was found (implies single-shot, not interactive)
+  _sawVerbose?: boolean; // Internal: true when --verbose/-v was passed; forwarded to child `claude` in single-shot mode (Claude Code requires it with --print --output-format stream-json)
 
   // Model Mapping
   modelOpus?: string;

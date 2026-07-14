@@ -2,6 +2,15 @@
 
 All notable changes to [Claudish](https://github.com/MadAppGang/claudish).
 
+## [7.12.4] - 2026-07-14
+
+### Bug Fixes
+
+- **`--verbose` now reaches the child `claude` in single-shot mode**: claudish consumed `--verbose`/`-v` as its own log-verbosity flag and never forwarded it, so it never reached `claude`. But Claude Code hard-errors on `--print --output-format stream-json` unless `--verbose` is also present — a machine consumer (e.g. madbench) that passes `--verbose` had its session die instantly with zero output. `--verbose` is now forwarded to `claude` in non-interactive/print mode (deduped against an explicit passthrough `--verbose`).
+- **stdout pollution in single-shot mode**: claudish printed its own banner (`[claudish] Model:`, `[claudish] Arguments:`) and lifecycle chatter (`Shutting down proxy server...`, `Done`, signal notices) to **stdout**. In single-shot/print mode stdout carries Claude Code's machine-readable output (e.g. stream-json parsed line-by-line), so this corrupted the stream. All claudish self-output now routes to **stderr** whenever the session is non-interactive; interactive mode is unchanged.
+- **First-run auto-approve prompt hung machine-driven single-shot runs**: the one-time "Enable auto-approve? [Y/n]" confirmation only skipped on `--stdin`. A consumer that pipes the prompt on stdin *without* claudish's `--stdin` flag (madbench uses `--input-format text`, a `claude` flag) hit the readline prompt, which stole the prompt from `claude`'s stdin and exited 1. The confirmation is now also skipped in single-shot/print mode (no human to answer). Auto-approve stays on, so `claude` still receives `--dangerously-skip-permissions`.
+- **Duplicate print flag**: single-shot mode no longer appends its own `-p` when the caller already passed `-p`/`--print` through (they are synonyms; the duplicate was harmless but produced a confusing arg line).
+
 ## [7.12.3] - 2026-07-13
 
 ### Bug Fixes

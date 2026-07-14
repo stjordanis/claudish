@@ -534,9 +534,18 @@ async function runCli() {
     // Auto-approve is enabled by default, but on first run we confirm with the user.
     // If user explicitly passed --no-auto-approve, skip the prompt entirely.
     // If --stdin is set, skip the prompt — no human to confirm when piping input.
+    // Skip in single-shot/print mode too: a machine-driven run (e.g. madbench:
+    // `--print --output-format stream-json`, prompt piped on stdin without
+    // claudish's own --stdin flag) has no human to answer, and the readline
+    // would steal the prompt from the child `claude`'s stdin and hang.
     const rawArgs = process.argv.slice(2);
     const explicitNoAutoApprove = rawArgs.includes("--no-auto-approve");
-    if (cliConfig.autoApprove && !explicitNoAutoApprove && !cliConfig.stdin) {
+    if (
+      cliConfig.autoApprove &&
+      !explicitNoAutoApprove &&
+      !cliConfig.stdin &&
+      cliConfig.interactive
+    ) {
       const { loadConfig, saveConfig } = await import("./profile-config.js");
       try {
         const cfg = loadConfig();
@@ -818,15 +827,19 @@ async function runCli() {
       // Clear diagOutput BEFORE cleanup to prevent write-after-end
       setDiagOutput(null);
       diag.cleanup();
-      // Always cleanup proxy
+      // Always cleanup proxy. Route claudish's own chatter to stderr in
+      // single-shot mode — stdout there carries Claude Code's machine-readable
+      // output (e.g. --output-format stream-json) that consumers parse line-by-line.
       if (!cliConfig.quiet) {
-        console.log("\n[claudish] Shutting down proxy server...");
+        const write = cliConfig.interactive ? console.log : console.error;
+        write("\n[claudish] Shutting down proxy server...");
       }
       await proxy.shutdown();
     }
 
     if (!cliConfig.quiet) {
-      console.log("[claudish] Done\n");
+      const write = cliConfig.interactive ? console.log : console.error;
+      write("[claudish] Done\n");
     }
 
     // Suggest sending logs if session had errors

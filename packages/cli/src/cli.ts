@@ -293,6 +293,13 @@ export async function parseArgs(args: string[]): Promise<ClaudishConfig> {
       config.quiet = true;
     } else if (arg === "--verbose" || arg === "-v") {
       config.quiet = false;
+      // Also remember it so we can forward --verbose to the child `claude` in
+      // single-shot/print mode. Claude Code hard-errors on
+      // `--print --output-format stream-json` WITHOUT `--verbose`, so a
+      // machine consumer (e.g. madbench) that passes --verbose must have it
+      // reach `claude`, not just claudish. Forwarded post-parse (see below)
+      // once we know whether this is a single-shot session.
+      config._sawVerbose = true;
     } else if (arg === "--json") {
       config.jsonOutput = true;
     } else if (arg === "--monitor") {
@@ -573,6 +580,22 @@ export async function parseArgs(args: string[]): Promise<ClaudishConfig> {
   // so they should be interactive too.
   if (!config._hasPositionalPrompt && !config.stdin && !config._hasPrintFlag) {
     config.interactive = true;
+  }
+
+  // Forward --verbose to the child `claude` in single-shot mode. claudish
+  // consumes --verbose/-v as its own log-verbosity flag (above), so it never
+  // reaches `claude` on its own. But Claude Code HARD-ERRORS on
+  // `--print --output-format stream-json` unless `--verbose` is also present,
+  // so a machine consumer that passes --verbose expects it to reach `claude`.
+  // Only forward in non-interactive mode (interactive `claude` rejects
+  // --verbose), and dedupe against an explicit passthrough --verbose.
+  if (
+    config._sawVerbose &&
+    !config.interactive &&
+    !config.claudeArgs.includes("--verbose") &&
+    !config.claudeArgs.includes("-v")
+  ) {
+    config.claudeArgs.push("--verbose");
   }
 
   // Handle monitor mode setup
