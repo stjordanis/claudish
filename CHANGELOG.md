@@ -15,12 +15,7 @@ All notable changes to [Claudish](https://github.com/MadAppGang/claudish).
 
 ### Bug Fixes
 
-- **gpt-5.6 family 400 on `oai@`**: gpt-5.6 models (sol/terra/luna) reject function tools + `reasoning_effort` on `/v1/chat/completions`. The `oai@` profile now composes the full Responses-API slice (endpoint `/v1/responses` + `CodexAPIFormat` + responses SSE) for these models — verified live with tool-calling runs. Temporary name gate; will be replaced by the catalog capability record.
-- **Native `max` effort**: gpt-5.6 accepts `reasoning.effort: "max"` natively; Claude Code's `max` level now passes through instead of clamping to `xhigh`. Also widened `none`/`xhigh` acceptance gates for the gpt-5.6 family on the Responses path.
-
-### Debugging
-
-- **`[RequestMeta]` trace** (debug log only, `--log-debug`): logs each incoming request's `output_config`, `metadata`, and `anthropic-beta` header — previously unobservable fields, needed to diagnose effort/mode handling.
+- v7.12.3 — route gpt-5.6 family via /v1/responses on oai@, native max effort, RequestMeta trace([`bcd4b3c`](https://github.com/MadAppGang/claudish/commit/bcd4b3cd9d7e971e5b913315e329fc72e61470a6))
 
 ## [7.12.2] - 2026-07-12
 
