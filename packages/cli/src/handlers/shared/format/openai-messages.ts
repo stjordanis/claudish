@@ -45,11 +45,23 @@ export function convertMessagesToOpenAI(
   return messages;
 }
 
+function imageBlockToUrlPart(block: any): any {
+  return {
+    type: "image_url",
+    image_url: { url: `data:${block.source.media_type};base64,${block.source.data}` },
+  };
+}
+
 function processUserMessage(msg: any, messages: any[], simpleFormat = false) {
   if (Array.isArray(msg.content)) {
     const textParts: string[] = [];
     const contentParts: any[] = [];
     const toolResults: any[] = [];
+    // Images pulled out of tool_result content. OpenAI tool/function messages
+    // cannot carry images, so we forward them as a following user message —
+    // NOT JSON.stringify'd into the tool output (a screenshot's base64 there
+    // becomes ~100k text tokens per image and blows the context window).
+    const toolResultImages: any[] = [];
     const seen = new Set<string>();
 
     for (const block of msg.content) {
@@ -60,24 +72,47 @@ function processUserMessage(msg: any, messages: any[], simpleFormat = false) {
         }
       } else if (block.type === "image") {
         if (!simpleFormat) {
-          contentParts.push({
-            type: "image_url",
-            image_url: { url: `data:${block.source.media_type};base64,${block.source.data}` },
-          });
+          contentParts.push(imageBlockToUrlPart(block));
         }
         // Skip images in simple format - MLX doesn't support vision
       } else if (block.type === "tool_result") {
         if (seen.has(block.tool_use_id)) continue;
         seen.add(block.tool_use_id);
-        const resultContent =
-          typeof block.content === "string" ? block.content : JSON.stringify(block.content);
+
+        // Split tool_result content into text (stays in the tool message) and
+        // images (forwarded as a user message). String content passes through.
+        let resultText: string;
+        if (typeof block.content === "string") {
+          resultText = block.content;
+        } else if (Array.isArray(block.content)) {
+          const texts: string[] = [];
+          const others: any[] = [];
+          for (const inner of block.content) {
+            if (inner.type === "text") {
+              texts.push(inner.text);
+            } else if (inner.type === "image" && inner.source) {
+              if (!simpleFormat) toolResultImages.push(imageBlockToUrlPart(inner));
+            } else {
+              others.push(inner);
+            }
+          }
+          resultText = texts.join("\n");
+          if (others.length) resultText += (resultText ? "\n" : "") + JSON.stringify(others);
+          // Tool/function messages must be non-empty; point at the forwarded image.
+          if (!resultText) {
+            resultText = toolResultImages.length ? "[image returned; see following message]" : "";
+          }
+        } else {
+          resultText = JSON.stringify(block.content);
+        }
+
         if (simpleFormat) {
           // In simple format, include tool results as text in user message
-          textParts.push(`[Tool Result]: ${resultContent}`);
+          textParts.push(`[Tool Result]: ${resultText}`);
         } else {
           toolResults.push({
             role: "tool",
-            content: resultContent,
+            content: resultText,
             tool_call_id: block.tool_use_id,
           });
         }
@@ -91,6 +126,10 @@ function processUserMessage(msg: any, messages: any[], simpleFormat = false) {
       }
     } else {
       if (toolResults.length) messages.push(...toolResults);
+      // Images from tool results ride in their own user message, after the tool
+      // outputs they came from (OpenAI requires tool messages to directly follow
+      // the assistant tool_calls; a user image message may follow).
+      if (toolResultImages.length) messages.push({ role: "user", content: toolResultImages });
       if (contentParts.length) messages.push({ role: "user", content: contentParts });
     }
   } else {

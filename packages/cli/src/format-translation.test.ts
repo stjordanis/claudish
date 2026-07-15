@@ -1008,6 +1008,121 @@ describe("Regression: GeminiAPIFormat images in tool_result", () => {
   });
 });
 
+// ─── Regression: OpenAI/Codex images in tool_result (Read of an image file) ──
+//
+// Real production failure: a claudish session on gpt-5.6-sol (codex Responses
+// API) Read screenshot files. Each Read returns a tool_result containing an
+// image; the converter JSON-stringified that content, so a ~350KB base64 image
+// became ~90k TEXT tokens in the tool output. Three of them + the conversation
+// blew the context window: "[API Error: context_length_exceeded]". Images in a
+// tool_result must ride as image_url (→ input_image), never as text.
+// (Transcript: aniflow/mastra cdadb661, messages #31/#32.)
+describe("Regression: OpenAI/Codex images in tool_result", () => {
+  async function getConverter() {
+    const mod = await import("./handlers/shared/format/openai-messages.js");
+    return mod.convertMessagesToOpenAI;
+  }
+  async function getCodexFormat() {
+    const mod = await import("./adapters/codex-api-format.js");
+    return mod.CodexAPIFormat;
+  }
+
+  const TINY_PNG_B64 =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==";
+
+  const requestWithToolResultImage = {
+    model: "gpt-5.6-sol",
+    messages: [
+      { role: "user", content: [{ type: "text", text: "read the screenshot" }] },
+      {
+        role: "assistant",
+        content: [{ type: "tool_use", id: "toolu_read_1", name: "Read", input: {} }],
+      },
+      {
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "toolu_read_1",
+            content: [
+              { type: "text", text: "[Image: original 4514x2432, displayed at 2000x1078]" },
+              { type: "image", source: { type: "base64", media_type: "image/png", data: TINY_PNG_B64 } },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+
+  test("tool_result image becomes image_url, not JSON-stringified into the tool output", async () => {
+    const convertMessagesToOpenAI = await getConverter();
+    const messages = convertMessagesToOpenAI(requestWithToolResultImage, "gpt-5.6-sol");
+
+    const toolMsg = messages.find((m: any) => m.role === "tool");
+    expect(toolMsg).toBeDefined();
+    // Text stays in the tool output; the base64 must NOT be there.
+    expect(toolMsg.content).toContain("original 4514x2432");
+    expect(toolMsg.content).not.toContain(TINY_PNG_B64);
+
+    // The image rides in its own user message as an image_url part.
+    const imageMsg = messages.find(
+      (m: any) => m.role === "user" && Array.isArray(m.content) && m.content.some((p: any) => p.type === "image_url")
+    );
+    expect(imageMsg).toBeDefined();
+    const imagePart = imageMsg.content.find((p: any) => p.type === "image_url");
+    expect(imagePart.image_url.url).toBe(`data:image/png;base64,${TINY_PNG_B64}`);
+  });
+
+  test("codex Responses payload sends the tool_result image as input_image (bounded tokens)", async () => {
+    const convertMessagesToOpenAI = await getConverter();
+    const CodexAPIFormat = await getCodexFormat();
+    const messages = convertMessagesToOpenAI(requestWithToolResultImage, "gpt-5.6-sol");
+    const payload = new CodexAPIFormat("gpt-5.6-sol").buildPayload(
+      requestWithToolResultImage,
+      messages,
+      []
+    );
+
+    const serialized = JSON.stringify(payload);
+    // Image is a proper input_image, and the base64 never lands in a tool output.
+    expect(serialized).toContain('"input_image"');
+    const toolOutputs = payload.input
+      .filter((i: any) => i.type === "function_call_output")
+      .map((i: any) => i.output || "")
+      .join("");
+    expect(toolOutputs).not.toContain(TINY_PNG_B64);
+    expect(toolOutputs).toContain("original 4514x2432");
+  });
+
+  test("string tool_result still passes through unchanged", async () => {
+    const convertMessagesToOpenAI = await getConverter();
+    const messages = convertMessagesToOpenAI(
+      {
+        model: "gpt-5.6-sol",
+        messages: [
+          {
+            role: "assistant",
+            content: [{ type: "tool_use", id: "toolu_1", name: "Read", input: {} }],
+          },
+          {
+            role: "user",
+            content: [{ type: "tool_result", tool_use_id: "toolu_1", content: "file contents here" }],
+          },
+        ],
+      },
+      "gpt-5.6-sol"
+    );
+    const toolMsg = messages.find((m: any) => m.role === "tool");
+    expect(toolMsg.content).toBe("file contents here");
+    // No stray image message.
+    expect(
+      messages.some(
+        (m: any) => m.role === "user" && Array.isArray(m.content) && m.content.some((p: any) => p.type === "image_url")
+      )
+    ).toBe(false);
+  });
+});
+
 describe("Regression: Z.AI GLM-5 input_tokens in final usage event (#74)", () => {
   test("input_tokens from message_delta.usage is captured (not stuck at 0)", async () => {
     const mod = await import("./handlers/shared/stream-parsers/anthropic-sse.js");
@@ -1448,5 +1563,257 @@ describe("Regression: Anthropic SSE in-stream error handling (#106)", () => {
     const errorEvent = events.find((e) => e.data?.type === "error");
     expect(errorEvent).toBeDefined();
     expect(errorEvent?.data?.error?.message).toContain("temporarily overloaded");
+  });
+});
+
+// ─── OpenAI Responses API SSE Parser Tests ──────────────────────────────────
+
+/**
+ * Regression: gpt-5.6-sol (Responses API) duplicated its FIRST tool call.
+ *
+ * Fixtures are real captures from POST https://api.openai.com/v1/responses
+ * (gpt-5.6-sol, streaming, parallel function calls).
+ *
+ * The bug: the parser advanced `blockIndex` onto the first tool's block index
+ * and never cleared `hasTextContent`, so end-of-stream emitted a second
+ * content_block_stop for that tool. Claude Code re-dispatched it — two identical
+ * agents, plan approval asked twice. Separately, `functionCalls` is keyed twice
+ * per call (call_id + item_id), so `functionCalls.size` inflated the block index
+ * and produced non-contiguous indices (1, 4, 6, 8 instead of 1, 2, 3, 4).
+ */
+describe("OpenAI Responses SSE → Claude SSE (createResponsesStreamHandler)", () => {
+  async function getParser() {
+    const mod = await import("./handlers/shared/stream-parsers/openai-responses-sse.js");
+    return mod.createResponsesStreamHandler;
+  }
+
+  /** Every content_block_start index, in emission order. */
+  function blockStarts(events: ClaudeEvent[]): { index: number; type: string; id?: string }[] {
+    return events
+      .filter((e) => e.data?.type === "content_block_start")
+      .map((e) => ({
+        index: e.data.index,
+        type: e.data.content_block.type,
+        id: e.data.content_block.id,
+      }));
+  }
+
+  test("text + parallel tool calls: no duplicate tool_use, contiguous block indices", async () => {
+    const createResponsesStreamHandler = await getParser();
+    const fixture = fixtureToResponse(join(FIXTURES_DIR, "gpt-5.6-sol-responses-turn1.sse"));
+
+    const response = createResponsesStreamHandler(createMockContext(), fixture, {
+      modelName: "gpt-5.6-sol",
+    });
+    const events = await parseClaudeSseStream(response);
+
+    const starts = blockStarts(events);
+    const toolStarts = starts.filter((s) => s.type === "tool_use");
+
+    // The fixture has 3 parallel read_file calls — exactly 3 tool_use blocks.
+    expect(extractToolNames(events)).toEqual(["read_file", "read_file", "read_file"]);
+
+    // Each tool_use id appears exactly once. (The bug re-emitted the first one.)
+    const toolIds = toolStarts.map((t) => t.id);
+    expect(new Set(toolIds).size).toBe(toolIds.length);
+
+    // Block indices are contiguous from 0 and never reused.
+    expect(starts.map((s) => s.index)).toEqual(starts.map((_, i) => i));
+
+    // Exactly one stop per start, and no stop for a block that never started.
+    const stops = events
+      .filter((e) => e.data?.type === "content_block_stop")
+      .map((e) => e.data.index);
+    expect([...stops].sort((a, b) => a - b)).toEqual(starts.map((s) => s.index));
+
+    expect(extractStopReason(events)).toBe("tool_use");
+  });
+
+  test("tool calls with no preceding text still emit one block per call", async () => {
+    const createResponsesStreamHandler = await getParser();
+    const fixture = fixtureToResponse(
+      join(FIXTURES_DIR, "gpt-5.6-sol-responses-toolsonly-turn1.sse")
+    );
+
+    const response = createResponsesStreamHandler(createMockContext(), fixture, {
+      modelName: "gpt-5.6-sol",
+    });
+    const events = await parseClaudeSseStream(response);
+
+    const starts = blockStarts(events);
+    expect(starts.every((s) => s.type === "tool_use")).toBe(true);
+    expect(new Set(starts.map((s) => s.id)).size).toBe(starts.length);
+    expect(starts.map((s) => s.index)).toEqual(starts.map((_, i) => i));
+    expect(extractStopReason(events)).toBe("tool_use");
+  });
+
+  test("reasoning summary becomes a thinking block, not the assistant's answer", async () => {
+    const createResponsesStreamHandler = await getParser();
+
+    // Synthetic: the captured fixtures carry no reasoning summary (OpenAI only
+    // returns one for verified orgs), but the codex transport requests
+    // summary:auto and gpt-5.6 reasoning models emit these events in every turn.
+    const sse =
+      `data: ${JSON.stringify({ type: "response.reasoning_summary_text.delta", delta: "Let me check the files." })}\n\n` +
+      `data: ${JSON.stringify({ type: "response.output_text.delta", delta: "Reading them now." })}\n\n` +
+      `data: ${JSON.stringify({ type: "response.completed", response: { usage: { input_tokens: 5, output_tokens: 7 } } })}\n\n`;
+    const fixture = new Response(new Blob([sse]).stream(), { status: 200 });
+
+    const response = createResponsesStreamHandler(createMockContext(), fixture, {
+      modelName: "gpt-5.6-sol",
+    });
+    const events = await parseClaudeSseStream(response);
+
+    const starts = blockStarts(events);
+    expect(starts.map((s) => s.type)).toEqual(["thinking", "text"]);
+
+    // Reasoning must NOT leak into the visible answer.
+    expect(extractText(events)).toBe("Reading them now.");
+
+    const thinking = events
+      .filter((e) => e.data?.delta?.type === "thinking_delta")
+      .map((e) => e.data.delta.thinking)
+      .join("");
+    expect(thinking).toBe("Let me check the files.");
+    expect(extractStopReason(events)).toBe("end_turn");
+  });
+
+  test("multi-part reasoning summary keeps paragraph breaks between sections", async () => {
+    // Real capture: 3 reasoning summary parts from cx@gpt-5.6-sol (OAuth codex
+    // path). OpenAI streams each section as "**Title**" with the break between
+    // parts carried structurally (summary_index), NOT in the text — so naive
+    // concatenation smashes them into "**A****B****C**" (the reported glitch).
+    const createResponsesStreamHandler = await getParser();
+    const fixture = fixtureToResponse(
+      join(FIXTURES_DIR, "gpt-5.6-sol-responses-reasoning-multipart.sse")
+    );
+
+    const response = createResponsesStreamHandler(createMockContext(), fixture, {
+      modelName: "gpt-5.6-sol",
+    });
+    const events = await parseClaudeSseStream(response);
+
+    const thinking = events
+      .filter((e) => e.data?.delta?.type === "thinking_delta")
+      .map((e) => e.data.delta.thinking)
+      .join("");
+
+    // The three real section titles are separated, not concatenated.
+    expect(thinking).toContain(
+      "**Auditing actual repository context**\n\n**Investigating log-based environment clues**"
+    );
+    expect(thinking).toContain(
+      "**Investigating log-based environment clues**\n\n**Identifying possible Magus codebase relation**"
+    );
+    // The smash-together signature must be gone.
+    expect(thinking).not.toContain("context****Investigating");
+    expect(thinking).not.toContain("clues****Identifying");
+
+    // Reasoning stays in the thinking block; the answer is separate.
+    expect(blockStarts(events).map((s) => s.type)).toEqual(["thinking", "text"]);
+    expect(extractText(events)).toBe("Done.");
+  });
+});
+
+/**
+ * Regression anchored to the REAL production failure.
+ *
+ * test-fixtures/transcripts/magus-fix-duplicate-agents-turn.json is a verbatim
+ * capture of the Claude Code transcript turn (msg_1784036929422) where this bug
+ * surfaced: gpt-5.6-sol asked for 4 parallel Agent investigations, but the buggy
+ * parser re-emitted the first tool's content_block_stop, so Claude Code recorded
+ * 5 tool_use blocks and ran "Trace missing plugin versions" twice.
+ *
+ * We (1) pin that historical signature, then (2) reconstruct the upstream
+ * /v1/responses stream for that exact turn — deriving every call_id from the
+ * real recorded tool_use ids — and replay it through the CURRENT parser,
+ * asserting it now yields the 4 agents the model intended, no duplicate.
+ */
+describe("Regression: magus-fix duplicate-agents turn (real transcript)", () => {
+  async function getParser() {
+    const mod = await import("./handlers/shared/stream-parsers/openai-responses-sse.js");
+    return mod.createResponsesStreamHandler;
+  }
+
+  const snapshot = JSON.parse(
+    readFileSync(
+      join(FIXTURES_DIR, "..", "transcripts", "magus-fix-duplicate-agents-turn.json"),
+      "utf-8"
+    )
+  );
+
+  test("historical signature: 5 blocks emitted, 4 distinct, first agent duplicated", () => {
+    const emitted: string[] = snapshot.emittedToolIds;
+    const distinct = [...new Set(emitted)];
+    expect(emitted.length).toBe(5);
+    expect(distinct.length).toBe(4);
+    // The one repeated id is the FIRST tool — exactly the parser's off-by-one.
+    const dup = emitted.find((id, i) => emitted.indexOf(id) !== i);
+    expect(dup).toBe(emitted[0]);
+    expect(snapshot.intendedToolIds).toEqual(distinct);
+  });
+
+  test("fixed parser reproduces the 4 intended agents, no duplicate", async () => {
+    const createResponsesStreamHandler = await getParser();
+
+    // Reconstruct upstream /v1/responses SSE for this turn. The parser derives
+    // its output id as `toolu_${callId}` when callId lacks the toolu_ prefix, so
+    // strip that prefix to recover each real upstream call_id.
+    const ev = (o: any) => `data: ${JSON.stringify(o)}\n\n`;
+    let sse = ev({ type: "response.created", response: { id: "resp_magus" } });
+    // The model reasoned before dispatching (that reasoning is what set the
+    // stale hasTextContent flag that triggered the duplicate).
+    sse += ev({
+      type: "response.reasoning_summary_text.delta",
+      delta: "Four independent issues — fan out one investigator each.",
+    });
+    snapshot.tools.forEach((t: any, i: number) => {
+      const callId = t.id.replace(/^toolu_/, "");
+      const item = { type: "function_call", id: `fc_${i}`, call_id: callId, name: t.name };
+      sse += ev({ type: "response.output_item.added", output_index: i, item });
+      sse += ev({
+        type: "response.function_call_arguments.delta",
+        item_id: `fc_${i}`,
+        call_id: callId,
+        delta: `{"description":${JSON.stringify(t.desc)}}`,
+      });
+      sse += ev({ type: "response.output_item.done", output_index: i, item });
+    });
+    sse += ev({
+      type: "response.completed",
+      response: { usage: { input_tokens: 57092, output_tokens: 1159 } },
+    });
+
+    const fixture = new Response(new Blob([sse]).stream(), { status: 200 });
+    const response = createResponsesStreamHandler(createMockContext(), fixture, {
+      modelName: "gpt-5.6-sol",
+    });
+    const events = await parseClaudeSseStream(response);
+
+    const toolStarts = events.filter(
+      (e) => e.data?.type === "content_block_start" && e.data?.content_block?.type === "tool_use"
+    );
+    const emittedIds = toolStarts.map((e) => e.data.content_block.id);
+
+    // The fix: exactly the 4 intended agents, in order, each once — NOT 5.
+    expect(emittedIds).toEqual(snapshot.intendedToolIds);
+    expect(new Set(emittedIds).size).toBe(emittedIds.length);
+    expect(extractToolNames(events)).toEqual(["Agent", "Agent", "Agent", "Agent"]);
+
+    // Every content block has contiguous index and exactly one matching stop.
+    const starts = events
+      .filter((e) => e.data?.type === "content_block_start")
+      .map((e) => e.data.index);
+    const stops = events
+      .filter((e) => e.data?.type === "content_block_stop")
+      .map((e) => e.data.index);
+    expect(starts).toEqual(starts.map((_, i) => i));
+    expect([...stops].sort((a, b) => a - b)).toEqual(starts);
+
+    // Reasoning is a thinking block, not a 5th text/tool artefact.
+    const firstBlockType = events.find((e) => e.data?.type === "content_block_start")?.data
+      ?.content_block?.type;
+    expect(firstBlockType).toBe("thinking");
+    expect(extractStopReason(events)).toBe("tool_use");
   });
 });

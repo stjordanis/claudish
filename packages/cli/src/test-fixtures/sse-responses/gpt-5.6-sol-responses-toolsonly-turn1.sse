@@ -1,0 +1,45 @@
+event: response.created
+data: {"type":"response.created","response":{"id":"resp_0cdc5f6419e0533c006a56725fbd1c81989824022f83f5dd72","object":"response","created_at":1784050271,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"You are a coding agent. Use the provided tools. Call read_file for EACH file in parallel in a single turn.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.6-sol","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"low","mode":"standard","summary":"detailed"},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"function","description":"Read a file from disk","name":"read_file","output_schema":null,"parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false},"strict":true}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+
+event: response.in_progress
+data: {"type":"response.in_progress","response":{"id":"resp_0cdc5f6419e0533c006a56725fbd1c81989824022f83f5dd72","object":"response","created_at":1784050271,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"You are a coding agent. Use the provided tools. Call read_file for EACH file in parallel in a single turn.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.6-sol","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"low","mode":"standard","summary":"detailed"},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"function","description":"Read a file from disk","name":"read_file","output_schema":null,"parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false},"strict":true}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","item":{"id":"fc_0cdc5f6419e0533c006a567261c9988198bb86ee9d78dfb038","type":"function_call","status":"in_progress","arguments":"","call_id":"call_9pueTtuoV5qPAm2KEzcdqWgr","name":"read_file"},"output_index":0,"sequence_number":2}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":"{\"path\":\"a.ts\"}","item_id":"fc_0cdc5f6419e0533c006a567261c9988198bb86ee9d78dfb038","obfuscation":"X","output_index":0,"sequence_number":3}
+
+event: response.function_call_arguments.done
+data: {"type":"response.function_call_arguments.done","arguments":"{\"path\":\"a.ts\"}","item_id":"fc_0cdc5f6419e0533c006a567261c9988198bb86ee9d78dfb038","output_index":0,"sequence_number":4}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","item":{"id":"fc_0cdc5f6419e0533c006a567261c9988198bb86ee9d78dfb038","type":"function_call","status":"completed","arguments":"{\"path\":\"a.ts\"}","call_id":"call_9pueTtuoV5qPAm2KEzcdqWgr","name":"read_file"},"output_index":0,"sequence_number":5}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","item":{"id":"fc_0cdc5f6419e0533c006a567261c9a88198afb15f5086484028","type":"function_call","status":"in_progress","arguments":"","call_id":"call_G9X8nYSyImugtmsZoVTv7zPF","name":"read_file"},"output_index":1,"sequence_number":6}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":"{\"path\":\"b.ts\"}","item_id":"fc_0cdc5f6419e0533c006a567261c9a88198afb15f5086484028","obfuscation":"I","output_index":1,"sequence_number":7}
+
+event: response.function_call_arguments.done
+data: {"type":"response.function_call_arguments.done","arguments":"{\"path\":\"b.ts\"}","item_id":"fc_0cdc5f6419e0533c006a567261c9a88198afb15f5086484028","output_index":1,"sequence_number":8}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","item":{"id":"fc_0cdc5f6419e0533c006a567261c9a88198afb15f5086484028","type":"function_call","status":"completed","arguments":"{\"path\":\"b.ts\"}","call_id":"call_G9X8nYSyImugtmsZoVTv7zPF","name":"read_file"},"output_index":1,"sequence_number":9}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","item":{"id":"fc_0cdc5f6419e0533c006a567261c9b08198bd66520f2e9c00cc","type":"function_call","status":"in_progress","arguments":"","call_id":"call_MeTi9J8z4s9V0m2Xc2i59KhR","name":"read_file"},"output_index":2,"sequence_number":10}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":"{\"path\":\"c.ts\"}","item_id":"fc_0cdc5f6419e0533c006a567261c9b08198bd66520f2e9c00cc","obfuscation":"A","output_index":2,"sequence_number":11}
+
+event: response.function_call_arguments.done
+data: {"type":"response.function_call_arguments.done","arguments":"{\"path\":\"c.ts\"}","item_id":"fc_0cdc5f6419e0533c006a567261c9b08198bd66520f2e9c00cc","output_index":2,"sequence_number":12}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","item":{"id":"fc_0cdc5f6419e0533c006a567261c9b08198bd66520f2e9c00cc","type":"function_call","status":"completed","arguments":"{\"path\":\"c.ts\"}","call_id":"call_MeTi9J8z4s9V0m2Xc2i59KhR","name":"read_file"},"output_index":2,"sequence_number":13}
+
+event: response.completed
+data: {"type":"response.completed","response":{"id":"resp_0cdc5f6419e0533c006a56725fbd1c81989824022f83f5dd72","object":"response","created_at":1784050271,"status":"completed","background":false,"completed_at":1784050273,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"You are a coding agent. Use the provided tools. Call read_file for EACH file in parallel in a single turn.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.6-sol","moderation":null,"output":[{"id":"fc_0cdc5f6419e0533c006a567261c9988198bb86ee9d78dfb038","type":"function_call","status":"completed","arguments":"{\"path\":\"a.ts\"}","call_id":"call_9pueTtuoV5qPAm2KEzcdqWgr","name":"read_file"},{"id":"fc_0cdc5f6419e0533c006a567261c9a88198afb15f5086484028","type":"function_call","status":"completed","arguments":"{\"path\":\"b.ts\"}","call_id":"call_G9X8nYSyImugtmsZoVTv7zPF","name":"read_file"},{"id":"fc_0cdc5f6419e0533c006a567261c9b08198bd66520f2e9c00cc","type":"function_call","status":"completed","arguments":"{\"path\":\"c.ts\"}","call_id":"call_MeTi9J8z4s9V0m2Xc2i59KhR","name":"read_file"}],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"low","mode":"standard","summary":"detailed"},"safety_identifier":null,"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"function","description":"Read a file from disk","name":"read_file","output_schema":null,"parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false},"strict":true}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":{"input_tokens":97,"input_tokens_details":{"cache_write_tokens":0,"cached_tokens":0},"output_tokens":65,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":162},"user":null,"metadata":{}},"sequence_number":14}
+

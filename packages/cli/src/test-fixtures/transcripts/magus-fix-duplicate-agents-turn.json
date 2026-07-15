@@ -1,0 +1,23 @@
+{
+  "_provenance": "Real Claude Code transcript 56fbeb94-2f14-492f-8af1-856da6c26b61 (worktree magus-fix, gpt-5.6-sol via claudish Responses API), assistant message msg_1784036929422. This turn is where the openai-responses-sse parser bug surfaced in production: the model asked for 4 parallel Agent investigations, but the buggy parser re-emitted content_block_stop for the FIRST tool block, so Claude Code recorded 5 tool_use blocks and dispatched 'Trace missing plugin versions' twice (later confirmed by two live background agents aa70b5ee08efcd69c + a0d75b8d32fcc9cb7). Captured verbatim from the transcript — not hand-authored.",
+  "messageId": "msg_1784036929422",
+  "emittedToolIds": [
+    "toolu_call_2drUc8W8AEhPFLH9LdD4WxfO",
+    "toolu_call_A49y40FC77ZFJ6WlhXa8haH8",
+    "toolu_call_QO992lmMUlz4OThT6FSOaltO",
+    "toolu_call_fAFvScJ6UrFqlCRjPfQqM8I6",
+    "toolu_call_2drUc8W8AEhPFLH9LdD4WxfO"
+  ],
+  "intendedToolIds": [
+    "toolu_call_2drUc8W8AEhPFLH9LdD4WxfO",
+    "toolu_call_A49y40FC77ZFJ6WlhXa8haH8",
+    "toolu_call_QO992lmMUlz4OThT6FSOaltO",
+    "toolu_call_fAFvScJ6UrFqlCRjPfQqM8I6"
+  ],
+  "tools": [
+    { "name": "Agent", "id": "toolu_call_2drUc8W8AEhPFLH9LdD4WxfO", "desc": "Trace missing plugin versions" },
+    { "name": "Agent", "id": "toolu_call_A49y40FC77ZFJ6WlhXa8haH8", "desc": "Trace skills search 404" },
+    { "name": "Agent", "id": "toolu_call_QO992lmMUlz4OThT6FSOaltO", "desc": "Trace MCP registry filtering" },
+    { "name": "Agent", "id": "toolu_call_fAFvScJ6UrFqlCRjPfQqM8I6", "desc": "Trace tmux MCP startup" }
+  ]
+}

@@ -1,0 +1,32 @@
+data: {"type":"response.created","response":{"id":"resp_real_multipart"}}
+
+data: {"type":"response.reasoning_summary_part.added","item_id":"rs_0386fa33e459f634016a56c98cd99881919e1b9d3adeafaef0","output_index":0,"part":{"type":"summary_text","text":""},"sequence_number":3,"summary_index":0}
+
+data: {"type":"response.reasoning_summary_text.delta","delta":"**Auditing actual repository context**","item_id":"rs_0386fa33e459f634016a56c98cd99881919e1b9d3adeafaef0","obfuscation":"fqAyqsonyp","output_index":0,"sequence_number":4,"summary_index":0}
+
+data: {"type":"response.reasoning_summary_text.done","item_id":"rs_0386fa33e459f634016a56c98cd99881919e1b9d3adeafaef0","output_index":0,"sequence_number":5,"summary_index":0,"text":"**Auditing actual repository context**"}
+
+data: {"type":"response.reasoning_summary_part.done","item_id":"rs_0386fa33e459f634016a56c98cd99881919e1b9d3adeafaef0","output_index":0,"part":{"type":"summary_text","text":"**Auditing actual repository context**"},"sequence_number":6,"summary_index":0}
+
+data: {"type":"response.reasoning_summary_part.added","item_id":"rs_0386fa33e459f634016a56c98cd99881919e1b9d3adeafaef0","output_index":0,"part":{"type":"summary_text","text":""},"sequence_number":7,"summary_index":1}
+
+data: {"type":"response.reasoning_summary_text.delta","delta":"**Investigating log-based environment clues**","item_id":"rs_0386fa33e459f634016a56c98cd99881919e1b9d3adeafaef0","obfuscation":"Bwu","output_index":0,"sequence_number":8,"summary_index":1}
+
+data: {"type":"response.reasoning_summary_text.done","item_id":"rs_0386fa33e459f634016a56c98cd99881919e1b9d3adeafaef0","output_index":0,"sequence_number":9,"summary_index":1,"text":"**Investigating log-based environment clues**"}
+
+data: {"type":"response.reasoning_summary_part.done","item_id":"rs_0386fa33e459f634016a56c98cd99881919e1b9d3adeafaef0","output_index":0,"part":{"type":"summary_text","text":"**Investigating log-based environment clues**"},"sequence_number":10,"summary_index":1}
+
+data: {"type":"response.reasoning_summary_part.added","item_id":"rs_0386fa33e459f634016a56c98cd99881919e1b9d3adeafaef0","output_index":0,"part":{"type":"summary_text","text":""},"sequence_number":11,"summary_index":2}
+
+data: {"type":"response.reasoning_summary_text.delta","delta":"**Identifying possible Magus codebase relation**","item_id":"rs_0386fa33e459f634016a56c98cd99881919e1b9d3adeafaef0","obfuscation":"","output_index":0,"sequence_number":12,"summary_index":2}
+
+data: {"type":"response.reasoning_summary_text.done","item_id":"rs_0386fa33e459f634016a56c98cd99881919e1b9d3adeafaef0","output_index":0,"sequence_number":13,"summary_index":2,"text":"**Identifying possible Magus codebase relation**"}
+
+data: {"type":"response.reasoning_summary_part.done","item_id":"rs_0386fa33e459f634016a56c98cd99881919e1b9d3adeafaef0","output_index":0,"part":{"type":"summary_text","text":"**Identifying possible Magus codebase relation**"},"sequence_number":14,"summary_index":2}
+
+data: {"type":"response.output_text.delta","delta":"Done."}
+
+data: {"type":"response.completed","response":{"usage":{"input_tokens":42,"output_tokens":9}}}
+
+data: [DONE]
+
