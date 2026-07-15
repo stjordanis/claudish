@@ -44,6 +44,12 @@ export function createResponsesStreamHandler(
   // it is NOT in the text deltas — so tracking the index lets us re-insert it,
   // otherwise "**A**" + "**B**" render as one smashed "**A****B**".
   let lastSummaryIndex = -1;
+  // Set when OpenAI reports the response was cut short (response.incomplete).
+  // Must reach the client as a truthful stop_reason: when the model runs out of
+  // output budget mid-tool-call, OpenAI still emits the partial arguments, and
+  // claiming stop_reason "tool_use" tells the client to execute a tool whose
+  // JSON is truncated.
+  let incompleteReason: string | null = null;
   let inputTokens = 0;
   let outputTokens = 0;
   let hasToolUse = false;
@@ -236,7 +242,11 @@ export function createResponsesStreamHandler(
                   }
                 }
               } else if (event.type === "response.incomplete") {
-                log(`[ResponsesSSE] Response incomplete: ${event.reason || "unknown"}`);
+                // The reason lives at response.incomplete_details.reason — reading
+                // event.reason always yielded "unknown".
+                incompleteReason =
+                  event.response?.incomplete_details?.reason ?? event.reason ?? "unknown";
+                log(`[ResponsesSSE] Response incomplete: ${incompleteReason}`);
                 if (event.response?.usage) {
                   inputTokens = event.response.usage.input_tokens || inputTokens;
                   outputTokens = event.response.usage.output_tokens || outputTokens;
@@ -302,7 +312,23 @@ export function createResponsesStreamHandler(
         closeText();
         closeTools();
 
-        const stopReason = hasToolUse ? "tool_use" : "end_turn";
+        // A truncated turn must NOT be reported as a finished tool call. OpenAI
+        // emits the partial function_call arguments it managed to produce, so
+        // "tool_use" makes the client execute a tool with malformed JSON
+        // (InputValidationError). Anthropic's contract for a cut-off turn is
+        // stop_reason "max_tokens" — the client then discards the partial block.
+        const stopReason = incompleteReason
+          ? incompleteReason === "content_filter"
+            ? "refusal"
+            : "max_tokens"
+          : hasToolUse
+            ? "tool_use"
+            : "end_turn";
+        if (incompleteReason) {
+          log(
+            `[ResponsesSSE] Truncated response (${incompleteReason}) → stop_reason=${stopReason}`
+          );
+        }
         send("message_delta", {
           type: "message_delta",
           delta: { stop_reason: stopReason, stop_sequence: null },

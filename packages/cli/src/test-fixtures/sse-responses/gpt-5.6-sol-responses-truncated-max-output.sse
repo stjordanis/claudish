@@ -1,0 +1,28 @@
+data: {"type": "response.created", "response": {"id": "resp_real_truncated", "status": "in_progress"}}
+
+data: {"type": "response.output_item.added", "output_index": 1, "item": {"id": "fc_08c4038f0cf9417f016a57ac70371c8191bb866efafa7b665a", "type": "function_call", "status": "in_progress", "call_id": "call_trunc_1", "name": "Edit", "arguments": ""}}
+
+data: {"type": "response.function_call_arguments.delta", "delta": "{\"file_path\":\"/Users/jac", "item_id": "fc_08c4038f0cf9417f016a57ac70371c8191bb866efafa7b665a", "output_index": 1}
+
+data: {"type": "response.function_call_arguments.delta", "delta": "k/mag/timeroo/timeroo-fr", "item_id": "fc_08c4038f0cf9417f016a57ac70371c8191bb866efafa7b665a", "output_index": 1}
+
+data: {"type": "response.function_call_arguments.delta", "delta": "ontend/src/features/swit", "item_id": "fc_08c4038f0cf9417f016a57ac70371c8191bb866efafa7b665a", "output_index": 1}
+
+data: {"type": "response.function_call_arguments.delta", "delta": "ch-button/ui/index.tsx\",", "item_id": "fc_08c4038f0cf9417f016a57ac70371c8191bb866efafa7b665a", "output_index": 1}
+
+data: {"type": "response.function_call_arguments.delta", "delta": "\"old_string\":\"  const [m", "item_id": "fc_08c4038f0cf9417f016a57ac70371c8191bb866efafa7b665a", "output_index": 1}
+
+data: {"type": "response.function_call_arguments.delta", "delta": "ode, setMode] = useRecoi", "item_id": "fc_08c4038f0cf9417f016a57ac70371c8191bb866efafa7b665a", "output_index": 1}
+
+data: {"type": "response.function_call_arguments.delta", "delta": "lState(trackerMode);\",\"n", "item_id": "fc_08c4038f0cf9417f016a57ac70371c8191bb866efafa7b665a", "output_index": 1}
+
+data: {"type": "response.function_call_arguments.delta", "delta": "ew_string\":\"  const {", "item_id": "fc_08c4038f0cf9417f016a57ac70371c8191bb866efafa7b665a", "output_index": 1}
+
+data: {"type": "response.function_call_arguments.done", "arguments": "{\"file_path\":\"/Users/jack/mag/timeroo/timeroo-frontend/src/features/switch-button/ui/index.tsx\",\"old_string\":\"  const [mode, setMode] = useRecoilState(trackerMode);\",\"new_string\":\"  const {", "item_id": "fc_08c4038f0cf9417f016a57ac70371c8191bb866efafa7b665a", "output_index": 1}
+
+data: {"type": "response.output_item.done", "output_index": 1, "item": {"id": "fc_08c4038f0cf9417f016a57ac70371c8191bb866efafa7b665a", "type": "function_call", "status": "incomplete", "call_id": "call_trunc_1", "name": "Edit", "arguments": "{\"file_path\":\"/Users/jack/mag/timeroo/timeroo-frontend/src/features/switch-button/ui/index.tsx\",\"old_string\":\"  const [mode, setMode] = useRecoilState(trackerMode);\",\"new_string\":\"  const {"}}
+
+data: {"type": "response.incomplete", "response": {"id": "resp_real_truncated", "status": "incomplete", "incomplete_details": {"reason": "max_output_tokens"}, "usage": {"input_tokens": 195000, "output_tokens": 32000}}}
+
+data: [DONE]
+

@@ -1817,3 +1817,84 @@ describe("Regression: magus-fix duplicate-agents turn (real transcript)", () => 
     expect(extractStopReason(events)).toBe("tool_use");
   });
 });
+
+/**
+ * Regression: a turn cut short by max_output_tokens was reported as a finished
+ * tool call.
+ *
+ * Real failure (timeroo session, gpt-5.6-sol via codex, log 2026-07-15_15-27-02
+ * line 24596): the model ran out of output budget mid-tool-call. OpenAI emitted
+ * the partial function_call arguments it had produced, marked the item
+ * status:"incomplete", and sent response.incomplete with
+ * incomplete_details.reason = "max_output_tokens". The parser forwarded the
+ * partial JSON and then said stop_reason:"tool_use" — so Claude Code executed an
+ * Edit whose input was 189 bytes of truncated JSON:
+ *   InputValidationError: Edit was called with input that could not be parsed as JSON
+ *
+ * The fixture replays that turn with the real 189-byte truncated arguments.
+ * Note the codex backend rejects max_output_tokens ("Unsupported parameter"), so
+ * claudish cannot cap the budget — reporting the truncation honestly is the only
+ * available mitigation.
+ */
+describe("Regression: Responses turn truncated by max_output_tokens", () => {
+  async function getParser() {
+    const mod = await import("./handlers/shared/stream-parsers/openai-responses-sse.js");
+    return mod.createResponsesStreamHandler;
+  }
+
+  test("reports stop_reason=max_tokens, not tool_use, so the partial tool is not executed", async () => {
+    const createResponsesStreamHandler = await getParser();
+    const fixture = fixtureToResponse(
+      join(FIXTURES_DIR, "gpt-5.6-sol-responses-truncated-max-output.sse")
+    );
+
+    const response = createResponsesStreamHandler(createMockContext(), fixture, {
+      modelName: "gpt-5.6-sol",
+    });
+    const events = await parseClaudeSseStream(response);
+
+    // The whole point: the turn was cut off, so it must NOT look like a
+    // complete tool call the client should run.
+    expect(extractStopReason(events)).toBe("max_tokens");
+    expect(extractStopReason(events)).not.toBe("tool_use");
+  });
+
+  test("the streamed tool arguments are genuinely truncated (the client must not execute them)", async () => {
+    const createResponsesStreamHandler = await getParser();
+    const fixture = fixtureToResponse(
+      join(FIXTURES_DIR, "gpt-5.6-sol-responses-truncated-max-output.sse")
+    );
+
+    const response = createResponsesStreamHandler(createMockContext(), fixture, {
+      modelName: "gpt-5.6-sol",
+    });
+    const events = await parseClaudeSseStream(response);
+
+    const partialJson = events
+      .filter((e) => e.data?.delta?.type === "input_json_delta")
+      .map((e) => e.data.delta.partial_json)
+      .join("");
+
+    // Byte-for-byte the payload from the real InputValidationError.
+    expect(partialJson.length).toBe(189);
+    expect(partialJson.endsWith('"new_string":"  const {')).toBe(true);
+    expect(() => JSON.parse(partialJson)).toThrow(); // unparseable — hence max_tokens
+
+    // Blocks stay well-formed even though the turn was cut.
+    const starts = events.filter((e) => e.data?.type === "content_block_start").map((e) => e.data.index);
+    const stops = events.filter((e) => e.data?.type === "content_block_stop").map((e) => e.data.index);
+    expect(starts).toEqual(starts.map((_, i) => i));
+    expect([...stops].sort((a, b) => a - b)).toEqual(starts);
+  });
+
+  test("a complete turn still reports tool_use (no false max_tokens)", async () => {
+    const createResponsesStreamHandler = await getParser();
+    const fixture = fixtureToResponse(join(FIXTURES_DIR, "gpt-5.6-sol-responses-turn1.sse"));
+
+    const response = createResponsesStreamHandler(createMockContext(), fixture, {
+      modelName: "gpt-5.6-sol",
+    });
+    const events = await parseClaudeSseStream(response);
+    expect(extractStopReason(events)).toBe("tool_use");
+  });
+});
