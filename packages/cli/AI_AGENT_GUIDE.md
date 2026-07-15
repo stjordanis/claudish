@@ -266,7 +266,7 @@ for (const model of models) {
 | `--default-provider <name>` | Override default provider for bare model routing (v7.0.0+) | Auto-detected |
 | `--quiet` / `-q` | Suppress logs | Enabled in single-shot |
 | `--verbose` / `-v` | Show logs | Enabled in interactive |
-| `--log-debug` / `-d` | Debug logging to file | Disabled |
+| `--debug-claudish` / `-d` | Debug logging to file | Disabled |
 | `--no-auto-approve` | Require prompts | Auto-approve enabled |
 
 ### Claude Code Flag Passthrough

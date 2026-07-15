@@ -2,6 +2,12 @@
 
 All notable changes to [Claudish](https://github.com/MadAppGang/claudish).
 
+## [7.13.0] - 2026-07-16
+
+### Breaking Changes
+
+- **`--log-debug` is renamed to `--debug-claudish`** (short flag `-d` is unchanged). The old name was easy to confuse with Claude Code's own `--debug`: because `--debug` is not a claudish flag, `claudish --debug` silently forwards it to the child `claude`, while claudish's own file logging lived under a similar-looking name. The new name says whose debug log it is. `--log-debug` now exits with a message pointing at the new flag rather than being forwarded to `claude` as an unknown option.
+
 ## [7.12.7] - 2026-07-16
 
 ### Bug Fixes

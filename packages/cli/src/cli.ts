@@ -276,12 +276,19 @@ export async function parseArgs(args: string[]): Promise<ClaudishConfig> {
       config.dangerous = true;
     } else if (arg === "--interactive" || arg === "-i") {
       config.interactive = true;
-    } else if (arg === "--log-debug" || arg === "-d") {
+    } else if (arg === "--debug-claudish" || arg === "-d") {
       config.debug = true;
-      // Default to debug log level when --log-debug is enabled (can be overridden by --log-level)
+      // Default to debug log level when --debug-claudish is enabled (can be overridden by --log-level)
       if (config.logLevel === "info") {
         config.logLevel = "debug";
       }
+    } else if (arg === "--log-debug") {
+      // Renamed in v7.13.0. Fail loudly rather than forwarding an unknown flag
+      // to `claude`, which would surface as a confusing error from the child.
+      console.error(
+        "--log-debug was renamed to --debug-claudish (it enables claudish's own debug log, not Claude Code's --debug)."
+      );
+      process.exit(1);
     } else if (arg === "--log-level") {
       const levelArg = args[++i];
       if (!levelArg || !["debug", "info", "minimal"].includes(levelArg)) {
@@ -611,7 +618,7 @@ export async function parseArgs(args: string[]): Promise<ClaudishConfig> {
     if (!config.quiet) {
       console.log("[claudish] Monitor mode enabled - proxying to real Anthropic API");
       console.log("[claudish] Using Claude Code's native authentication");
-      console.log("[claudish] Tip: Run with --log-debug to see request/response details");
+      console.log("[claudish] Tip: Run with --debug-claudish to see request/response details");
     }
   }
 
@@ -1885,7 +1892,7 @@ ${h("OPTIONS")}
   ${green("--op")} ${yellow("<glob>")} ${green("--list")}      Preview which fields the glob would import (names only, no values)
   ${green("--op-env")} ${yellow("<id>")}            Load env vars from a 1Password Environment (highest priority)
   ${green("--port")} ${yellow("<port>")}            Proxy server port (default: random)
-  ${green("-d, --log-debug")}          Enable debug logging to file (logs/claudish_*.log)
+  ${green("-d, --debug-claudish")}     Enable claudish debug logging to file (logs/claudish_*.log)
   ${green("--log-off")}                Disable always-on structural logging (~/.claudish/logs/)
   ${green("--log-diag")} ${yellow("<mode>")}        Diagnostic output: auto (default), logfile, off
                            ${dim('Also: CLAUDISH_DIAG_MODE env var or "diagMode" in config.json')}

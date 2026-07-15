@@ -321,7 +321,7 @@ claudish --cost-audit  # If using cost tracking
 When all else fails, enable debug logging:
 
 ```bash
-claudish --log-debug --verbose --model x-ai/grok-code-fast-1 "your prompt"
+claudish --debug-claudish --verbose --model x-ai/grok-code-fast-1 "your prompt"
 ```
 
 This creates `logs/claudish_*.log` with detailed information.

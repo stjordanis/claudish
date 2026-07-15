@@ -207,7 +207,7 @@ export function initLogger(
     scheduleFlush();
   }
 
-  // Tier 2: Debug verbose logging (existing behavior, only with --log-debug)
+  // Tier 2: Debug verbose logging (existing behavior, only with --debug-claudish)
   if (debugMode) {
     logLevel = level;
     const logsDir = join(process.cwd(), "logs");

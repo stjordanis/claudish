@@ -37,8 +37,8 @@ describe("Group 1: Backward compatibility", () => {
     expect(config.claudeArgs).toEqual(["task"]);
   });
 
-  test("model + log-debug flag", async () => {
-    const config = await parseArgs(["--model", "grok", "--log-debug"]);
+  test("model + debug-claudish flag", async () => {
+    const config = await parseArgs(["--model", "grok", "--debug-claudish"]);
     expect(config.model).toBe("grok");
     expect(config.debug).toBe(true);
   });

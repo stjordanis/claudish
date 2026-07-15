@@ -284,7 +284,7 @@ claudish [OPTIONS] <claude-args...>
 | `--no-auto-approve` | | Explicitly enable permission prompts | |
 | `--dangerous` | | Pass `--dangerouslyDisableSandbox` | `false` |
 | `--port <port>` | | Proxy server port | Random (3000-9000) |
-| `--log-debug` | `-d` | Enable debug logging to `logs/` | `false` |
+| `--debug-claudish` | `-d` | Enable debug logging to `logs/` | `false` |
 | `--log-level <level>` | | Log verbosity: `debug`, `info`, `minimal` | `info` |
 | `--quiet` | `-q` | Suppress `[claudish]` messages | Default in single-shot |
 | `--verbose` | `-v` | Show `[claudish]` messages | Default in interactive |
@@ -894,7 +894,7 @@ claudish "debug issue" --verbose
 claudish "analyze code" --cwd /path/to/project
 
 # Multiple flags
-claudish --model openai/gpt-5.3-codex "task" --verbose --log-debug
+claudish --model openai/gpt-5.3-codex "task" --verbose --debug-claudish
 ```
 
 ### Monitor Mode
@@ -903,14 +903,14 @@ claudish --model openai/gpt-5.3-codex "task" --verbose --log-debug
 
 ```bash
 # Enable monitor mode (requires real Anthropic API key)
-claudish --monitor --log-debug "implement a feature"
+claudish --monitor --debug-claudish "implement a feature"
 ```
 
 **What Monitor Mode Does:**
 - ✅ **Proxies to REAL Anthropic API** (not OpenRouter) - Uses your actual Anthropic API key
 - ✅ **Logs ALL traffic** - Captures complete requests and responses
 - ✅ **Both streaming and JSON** - Logs SSE streams and JSON responses
-- ✅ **Debug logs to file** - Saves to `logs/claudish_*.log` when `--log-debug` is used
+- ✅ **Debug logs to file** - Saves to `logs/claudish_*.log` when `--debug-claudish` is used
 - ✅ **Pass-through proxy** - No translation, forwards as-is to Anthropic
 
 **When to use Monitor Mode:**
@@ -924,8 +924,8 @@ claudish --monitor --log-debug "implement a feature"
 # Monitor mode requires a REAL Anthropic API key (not placeholder)
 export ANTHROPIC_API_KEY='sk-ant-api03-...'
 
-# Use with --log-debug to save logs to file
-claudish --monitor --log-debug "your task"
+# Use with --debug-claudish to save logs to file
+claudish --monitor --debug-claudish "your task"
 
 # Logs are saved to: logs/claudish_TIMESTAMP.log
 ```
@@ -955,7 +955,7 @@ data: {"type":"content_block_start",...}
 === End Streaming Response ===
 ```
 
-**Note:** Monitor mode charges your Anthropic account (not OpenRouter). Use `--log-debug` flag to save logs for analysis.
+**Note:** Monitor mode charges your Anthropic account (not OpenRouter). Use `--debug-claudish` flag to save logs for analysis.
 
 ### Output Modes
 

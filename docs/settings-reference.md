@@ -30,7 +30,7 @@ All flags recognized by `parseArgs()` in `packages/cli/src/cli.ts`.
 | `--no-auto-approve` | | boolean | | Explicitly enable permission prompts (overrides -y) |
 | `--dangerous` | | boolean | false | Pass `--dangerouslyDisableSandbox` to Claude Code |
 | `--interactive` | `-i` | boolean | auto | Interactive mode (default when no prompt argument given) |
-| `--log-debug` | `-d` | boolean | false | Enable debug logging to `logs/claudish_*.log`; also sets `--log-level debug` unless overridden |
+| `--debug-claudish` | `-d` | boolean | false | Enable debug logging to `logs/claudish_*.log`; also sets `--log-level debug` unless overridden |
 | `--log-level` | | string | `"info"` | Log verbosity: `debug` (full content), `info` (truncated content), `minimal` (labels only) |
 | `--quiet` | `-q` | boolean | auto | Suppress `[claudish]` log messages (default in single-shot mode) |
 | `--verbose` | `-v` | boolean | auto | Show `[claudish]` messages (default in interactive mode) |
@@ -295,7 +295,7 @@ Same schema as `~/.claudish/config.json`. Placed in the project root directory (
 | `litellm-models-{hash}.json` | Cached LiteLLM model list per server (hash = SHA-256 of `LITELLM_BASE_URL`) | On each LiteLLM model fetch |
 | `kimi-oauth.json` | Kimi OAuth credentials (access + refresh tokens) | On `claudish --kimi-login` |
 | `gemini-oauth.json` | Gemini Code Assist OAuth credentials | On `claudish --gemini-login` |
-| `logs/` | Debug log files (created when `--log-debug` is used) | Per session |
+| `logs/` | Debug log files (created when `--debug-claudish` is used) | Per session |
 
 ---
 
@@ -742,7 +742,7 @@ claudish --model-opus g@gemini-3-pro --model-sonnet oai@gpt-5.3
 claudish -y --dangerous --model g@gemini-2.0-flash "task"
 
 # Debug
-claudish --log-debug --model g@gemini-2.0-flash "task"
+claudish --debug-claudish --model g@gemini-2.0-flash "task"
 
 # Profile management
 claudish init
