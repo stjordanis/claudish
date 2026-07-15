@@ -2,6 +2,12 @@
 
 All notable changes to [Claudish](https://github.com/MadAppGang/claudish).
 
+## [7.12.6] - 2026-07-16
+
+### Bug Fixes
+
+- **`claudish update` failed with "check your internet connection" on a working connection**: the npm version check used a hard 5s timeout with no retry, and collapsed every failure into `null` — so the command blamed the network. Registry latency is spiky in practice (~150ms when warm, several seconds on a cold DNS/TLS handshake, occasionally past 5s), which made this fire intermittently while `curl` fetched the same URL in under a second. The interactive `update` command now uses a 15s timeout with 2 retries, falls back to `npm view claudish version` (which honours the user's registry/proxy/auth config that a bare `fetch()` ignores), and reports the **actual** reason on failure (timeout vs HTTP status vs network error) along with the manual command for the detected install method. The fire-and-forget startup notification keeps its 5s single-attempt behaviour so it never stalls launch.
+
 ## [7.12.5] - 2026-07-15
 
 ### Bug Fixes
