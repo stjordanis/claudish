@@ -11,7 +11,7 @@
 
 import { execSync } from "node:child_process";
 import { getVersion } from "./cli.js";
-import { clearCache, compareVersions, fetchLatestVersion } from "./update-checker.js";
+import { clearCache, compareVersions, fetchLatestVersionOrThrow } from "./update-checker.js";
 
 // ANSI color codes
 const RESET = "\x1b[0m";
@@ -302,6 +302,48 @@ function printManualInstructions(): void {
 }
 
 /**
+ * Ask the npm CLI for the published version.
+ *
+ * Fallback for the direct registry fetch: `npm view` honours the user's npm
+ * configuration (custom/proxied registry, auth, CA certs) that a bare fetch()
+ * knows nothing about, and it has its own retry logic.
+ */
+function fetchLatestVersionViaNpm(): string | null {
+  try {
+    const output = execSync("npm view claudish version", {
+      encoding: "utf-8",
+      timeout: 20000,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    const version = output.trim();
+    return /^\d+\.\d+\.\d+/.test(version) ? version : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolve the latest published version for the interactive `update` command.
+ *
+ * Unlike the startup notification (fire-and-forget, 5s, no retry), the user is
+ * sitting here waiting — so use a generous timeout, retry, and fall back to the
+ * npm CLI before giving up.
+ */
+async function resolveLatestVersion(): Promise<{ version: string } | { error: string }> {
+  let fetchError: string;
+  try {
+    return { version: await fetchLatestVersionOrThrow({ timeoutMs: 15000, retries: 2 }) };
+  } catch (error) {
+    fetchError = error instanceof Error ? error.message : String(error);
+  }
+
+  const viaNpm = fetchLatestVersionViaNpm();
+  if (viaNpm) return { version: viaNpm };
+
+  return { error: fetchError };
+}
+
+/**
  * Main update command entry point
  */
 export async function updateCommand(): Promise<void> {
@@ -310,13 +352,25 @@ export async function updateCommand(): Promise<void> {
   const installInfo = detectInstallationMethod();
 
   // Fetch latest version
-  const latestVersion = await fetchLatestVersion();
+  const result = await resolveLatestVersion();
 
-  if (!latestVersion) {
+  if ("error" in result) {
     console.error(`${RED}✗${RESET} Unable to fetch latest version from npm registry.`);
-    console.error(`${YELLOW}Please check your internet connection and try again.${RESET}\n`);
+    console.error(`${DIM}Reason: ${result.error}${RESET}`);
+    console.error(
+      `${YELLOW}The npm registry may be slow or unreachable from this network.${RESET}`
+    );
+    const manualCommand = getUpdateCommand(installInfo.method);
+    if (manualCommand) {
+      console.error(`${YELLOW}You can update manually:${RESET}`);
+      console.error(`  ${CYAN}${manualCommand}${RESET}\n`);
+    } else {
+      printManualInstructions();
+    }
     process.exit(1);
   }
+
+  const latestVersion = result.version;
 
   // Compare versions
   const comparison = compareVersions(latestVersion, currentVersion);

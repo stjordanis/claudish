@@ -128,27 +128,68 @@ export function compareVersions(v1: string, v2: string): number {
   return 0;
 }
 
+export interface FetchVersionOptions {
+  /** Per-attempt timeout. Default 5s (the background check must not stall startup). */
+  timeoutMs?: number;
+  /** Extra attempts after the first. Default 0. */
+  retries?: number;
+}
+
 /**
- * Fetch latest version from npm registry
+ * Fetch latest version from npm registry, throwing a descriptive error on failure.
+ *
+ * Callers that want to report *why* the check failed use this; `fetchLatestVersion`
+ * wraps it for the fire-and-forget startup notification. Registry latency here is
+ * spiky (sub-200ms when warm, multiple seconds on a cold DNS/TLS handshake), so an
+ * aggressive timeout with no retry turns a slow network into a hard failure.
  */
-export async function fetchLatestVersion(): Promise<string | null> {
-  try {
+export async function fetchLatestVersionOrThrow(options: FetchVersionOptions = {}): Promise<string> {
+  const { timeoutMs = 5000, retries = 0 } = options;
+  let lastError: Error = new Error("unknown error");
+
+  for (let attempt = 0; attempt <= retries; attempt++) {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000); // 5s timeout
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch(NPM_REGISTRY_URL, {
+        signal: controller.signal,
+        headers: { Accept: "application/json" },
+      });
 
-    const response = await fetch(NPM_REGISTRY_URL, {
-      signal: controller.signal,
-      headers: { Accept: "application/json" },
-    });
+      if (!response.ok) {
+        throw new Error(`npm registry returned HTTP ${response.status}`);
+      }
 
-    clearTimeout(timeout);
-
-    if (!response.ok) {
-      return null;
+      const data = (await response.json()) as { version?: string };
+      if (!data.version) {
+        throw new Error("npm registry response contained no version field");
+      }
+      return data.version;
+    } catch (error) {
+      // AbortError means our own timeout fired — say so, rather than blaming the network.
+      lastError =
+        error instanceof Error && error.name === "AbortError"
+          ? new Error(`request timed out after ${timeoutMs}ms`)
+          : error instanceof Error
+            ? error
+            : new Error(String(error));
+      if (attempt < retries) {
+        await new Promise((resolve) => setTimeout(resolve, 300 * (attempt + 1)));
+      }
+    } finally {
+      clearTimeout(timeout);
     }
+  }
 
-    const data = (await response.json()) as { version?: string };
-    return data.version || null;
+  throw lastError;
+}
+
+/**
+ * Fetch latest version from npm registry. Returns null on any failure.
+ */
+export async function fetchLatestVersion(options: FetchVersionOptions = {}): Promise<string | null> {
+  try {
+    return await fetchLatestVersionOrThrow(options);
   } catch {
     // Network error, timeout, or parsing error - silently fail
     return null;
