@@ -2,6 +2,13 @@
 
 All notable changes to [Claudish](https://github.com/MadAppGang/claudish).
 
+## [7.12.7] - 2026-07-16
+
+### Bug Fixes
+
+- **`InputValidationError: ... could not be parsed as JSON` on tool calls (gpt-5.6 / Codex)**: when a turn ran out of output budget mid-tool-call, OpenAI emitted the partial `function_call` arguments it had produced, marked the item `status:"incomplete"`, and reported `response.incomplete` with `incomplete_details.reason = "max_output_tokens"`. The parser forwarded the partial JSON and then reported `stop_reason:"tool_use"` — telling the client the tool call was complete, so Claude Code executed an `Edit` whose input was truncated mid-string (e.g. 189 bytes ending at `"new_string":"  const {`). A cut-off turn is now reported as `stop_reason:"max_tokens"` (and `"refusal"` for `content_filter`), which is Anthropic's contract for a truncated turn — the client discards the partial block instead of running it. Note the Codex backend rejects `max_output_tokens` outright (*"Unsupported parameter"*), so claudish cannot raise the cap; reporting the truncation honestly is the only available mitigation.
+- **`response.incomplete` always logged `reason: unknown`**: the reason was read from `event.reason`, but it lives at `event.response.incomplete_details.reason`.
+
 ## [7.12.6] - 2026-07-16
 
 ### Bug Fixes
