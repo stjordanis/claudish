@@ -2,6 +2,25 @@
 
 All notable changes to [Claudish](https://github.com/MadAppGang/claudish).
 
+## [7.14.0] - 2026-07-16
+
+### Features
+
+- **Reasoning-item passback for the OpenAI Responses API (gpt-5.6 / Codex)**: claudish asked OpenAI for encrypted reasoning (`include: ["reasoning.encrypted_content"]`) and then threw it away, so the model re-derived its plan from scratch on every turn. OpenAI's reasoning guide is explicit: *"Pass back all reasoning items from function calls (along with function outputs) to maintain the model's reasoning continuity — this allows more efficient token usage and better results across multi-step tool-heavy workflows."* Claudish now caches the reasoning items that precede each tool call and replays them immediately before that call on subsequent turns.
+
+  Measured on gpt-5.6-sol via the Codex backend (high effort, across a tool boundary, 2 runs each):
+
+  | | reasoning tokens | output tokens | input tokens |
+  |---|---|---|---|
+  | with passback | 97 / 39 | 118 / 60 | 548 |
+  | without (previous behaviour) | 458 / 347 | 479 / 368 | 159 |
+
+  ~6x fewer reasoning tokens and ~5x fewer output tokens, for ~390 extra input tokens — and output bills at 6x the input rate. It also reduces consumption of the output budget whose exhaustion truncates a tool call mid-argument (`incomplete_details.reason = "max_output_tokens"`, see v7.12.7).
+
+  The payload is an opaque `encrypted_content` blob with no home in the Anthropic wire format. It is **not** carried in a thinking block's `signature`: real reasoning items frequently arrive with `summary: []` and emit no summary events at all, so most turns have no thinking block to attach it to. Instead the proxy — which outlives the session — keys the items by the tool call they preceded and re-inserts them on replay. The cache is best-effort and bounded (500 entries); a miss simply reproduces the previous behaviour, so a restart degrades rather than breaks.
+
+- `--debug-claudish` logs `[CodexAPIFormat] replaying N cached reasoning item(s)` so the passback is visible in a debug log.
+
 ## [7.13.0] - 2026-07-16
 
 ### Breaking Changes

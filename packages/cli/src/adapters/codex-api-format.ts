@@ -19,6 +19,7 @@ import {
   type EffortLevel,
   matchesModelFamily,
 } from "./base-api-format.js";
+import { reasoningForCall } from "./reasoning-cache.js";
 
 /**
  * Normalize model name for ChatGPT backend API.
@@ -75,6 +76,10 @@ export class CodexAPIFormat extends BaseAPIFormat {
 
   override buildPayload(claudeRequest: any, messages: any[], tools: any[]): any {
     const convertedMessages = this.convertMessagesToResponsesAPI(messages);
+    const replayedReasoning = convertedMessages.filter((i: any) => i.type === "reasoning").length;
+    if (replayedReasoning > 0) {
+      log(`[CodexAPIFormat] replaying ${replayedReasoning} cached reasoning item(s)`);
+    }
     const normalizedModel = normalizeCodexModel(this.modelId);
 
     // Strip IDs from message items (stateless mode doesn't support server-side state)
@@ -224,6 +229,14 @@ export class CodexAPIFormat extends BaseAPIFormat {
         }
         for (const toolCall of msg.tool_calls) {
           if (toolCall.type === "function") {
+            // Replay the reasoning that produced this call, immediately before
+            // it — OpenAI's guidance is to pass reasoning items back alongside
+            // function outputs so the model continues its chain of thought
+            // instead of re-deriving it (see reasoning-cache.ts for the measured
+            // ~6x reduction in reasoning tokens).
+            const reasoning = reasoningForCall(toolCall.id);
+            if (reasoning?.length) result.push(...reasoning);
+
             result.push({
               type: "function_call",
               call_id: toolCall.id,

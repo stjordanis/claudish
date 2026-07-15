@@ -1898,3 +1898,65 @@ describe("Regression: Responses turn truncated by max_output_tokens", () => {
     expect(extractStopReason(events)).toBe("tool_use");
   });
 });
+
+/**
+ * Reasoning-item passback: the parser must capture the encrypted reasoning that
+ * precedes a tool call, keyed by the id the client echoes back.
+ *
+ * Fixture is a real capture from chatgpt.com/backend-api/codex/responses
+ * (gpt-5.6-sol, high effort): a reasoning item carrying 2788 bytes of
+ * encrypted_content, followed by the function_call it informed.
+ *
+ * The summary is intermittent — this capture happens to have one, while other
+ * real captures return reasoning items with `summary: []` and emit no summary
+ * events at all. That unreliability is why the encrypted payload cannot ride in
+ * a thinking block (there is often no thinking block to attach it to), hence the
+ * cache.
+ */
+describe("Responses SSE captures reasoning items for passback", () => {
+  test("reasoning preceding a tool call is cached under the client-facing call id", async () => {
+    const mod = await import("./handlers/shared/stream-parsers/openai-responses-sse.js");
+    const cacheMod = await import("./adapters/reasoning-cache.js");
+    cacheMod.clearReasoningCache();
+
+    const fixture = fixtureToResponse(
+      join(FIXTURES_DIR, "gpt-5.6-sol-responses-reasoning-item.sse")
+    );
+    const response = mod.createResponsesStreamHandler(createMockContext(), fixture, {
+      modelName: "gpt-5.6-sol",
+    });
+    const events = await parseClaudeSseStream(response);
+
+    // The tool id the client will send back on the next turn.
+    const toolId = events.find(
+      (e) => e.data?.type === "content_block_start" && e.data?.content_block?.type === "tool_use"
+    )?.data.content_block.id;
+    expect(toolId).toBeDefined();
+
+    const cached = cacheMod.reasoningForCall(toolId);
+    expect(cached).toBeDefined();
+    expect(cached).toHaveLength(1);
+    expect(cached?.[0].type).toBe("reasoning");
+    expect((cached?.[0].encrypted_content ?? "").length).toBeGreaterThan(1000);
+    // The item is kept verbatim so replay matches what OpenAI emitted.
+    expect(cached?.[0].summary).toHaveLength(2);
+    expect(cached?.[0].content).toEqual([]);
+
+    cacheMod.clearReasoningCache();
+  });
+
+  test("a stream with no reasoning items caches nothing", async () => {
+    const mod = await import("./handlers/shared/stream-parsers/openai-responses-sse.js");
+    const cacheMod = await import("./adapters/reasoning-cache.js");
+    cacheMod.clearReasoningCache();
+
+    const fixture = fixtureToResponse(join(FIXTURES_DIR, "gpt-5.6-sol-responses-turn1.sse"));
+    const response = mod.createResponsesStreamHandler(createMockContext(), fixture, {
+      modelName: "gpt-5.6-sol",
+    });
+    await parseClaudeSseStream(response);
+
+    expect(cacheMod.reasoningCacheSize()).toBe(0);
+    cacheMod.clearReasoningCache();
+  });
+});

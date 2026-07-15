@@ -12,6 +12,10 @@
  */
 
 import type { Context } from "hono";
+import {
+  type CachedReasoningItem,
+  rememberReasoningForCall,
+} from "../../../adapters/reasoning-cache.js";
 import { getLogLevel, log } from "../../../logger.js";
 import { wrapAnthropicError } from "../anthropic-error.js";
 
@@ -50,6 +54,10 @@ export function createResponsesStreamHandler(
   // claiming stop_reason "tool_use" tells the client to execute a tool whose
   // JSON is truncated.
   let incompleteReason: string | null = null;
+  // Reasoning items seen since the last function call. OpenAI emits them just
+  // before the call they informed; we hand them to the cache keyed by that call
+  // so the next request can replay them (see reasoning-cache.ts).
+  let pendingReasoning: CachedReasoningItem[] = [];
   let inputTokens = 0;
   let outputTokens = 0;
   let hasToolUse = false;
@@ -185,6 +193,13 @@ export function createResponsesStreamHandler(
                   }
                   openToolBlocks.add(fnCallData);
 
+                  // Bind the reasoning that led to this call, keyed by the id the
+                  // client will echo back, so the next request can replay it.
+                  if (pendingReasoning.length > 0) {
+                    rememberReasoningForCall(callId, pendingReasoning);
+                    pendingReasoning = [];
+                  }
+
                   send("content_block_start", {
                     type: "content_block_start",
                     index: fnCallData.index,
@@ -233,6 +248,16 @@ export function createResponsesStreamHandler(
                   });
                 }
               } else if (event.type === "response.output_item.done") {
+                if (event.item?.type === "reasoning" && event.item.encrypted_content) {
+                  // Keep the item verbatim (minus the id, which the Responses API
+                  // does not require on replay and which buildPayload strips).
+                  pendingReasoning.push({
+                    type: "reasoning",
+                    content: event.item.content ?? [],
+                    encrypted_content: event.item.encrypted_content,
+                    summary: event.item.summary ?? [],
+                  });
+                }
                 if (event.item?.type === "function_call") {
                   const callId = event.item.call_id || event.item.id;
                   const fnCall = functionCalls.get(callId) || functionCalls.get(event.item.id);
