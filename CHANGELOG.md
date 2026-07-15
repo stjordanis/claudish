@@ -2,50 +2,61 @@
 
 All notable changes to [Claudish](https://github.com/MadAppGang/claudish).
 
-## [7.13.0] - 2026-07-16
+## [7.13.0] - 2026-07-15
 
-### Breaking Changes
+### Documentation
 
-- **`--log-debug` is renamed to `--debug-claudish`** (short flag `-d` is unchanged). The old name was easy to confuse with Claude Code's own `--debug`: because `--debug` is not a claudish flag, `claudish --debug` silently forwards it to the child `claude`, while claudish's own file logging lived under a similar-looking name. The new name says whose debug log it is. `--log-debug` now exits with a message pointing at the new flag rather than being forwarded to `claude` as an unknown option.
+- update CHANGELOG.md for v7.12.7([`14dcf8c`](https://github.com/MadAppGang/claudish/commit/14dcf8ccd82bdac6f46a80a5db7376791df3636a))
 
-## [7.12.7] - 2026-07-16
+### New Features
 
-### Bug Fixes
+- v7.13.0 — rename --log-debug to --debug-claudish([`61ec374`](https://github.com/MadAppGang/claudish/commit/61ec374df98c81d1c3c3d2759a47729e9affcc12))
 
-- **`InputValidationError: ... could not be parsed as JSON` on tool calls (gpt-5.6 / Codex)**: when a turn ran out of output budget mid-tool-call, OpenAI emitted the partial `function_call` arguments it had produced, marked the item `status:"incomplete"`, and reported `response.incomplete` with `incomplete_details.reason = "max_output_tokens"`. The parser forwarded the partial JSON and then reported `stop_reason:"tool_use"` — telling the client the tool call was complete, so Claude Code executed an `Edit` whose input was truncated mid-string (e.g. 189 bytes ending at `"new_string":"  const {`). A cut-off turn is now reported as `stop_reason:"max_tokens"` (and `"refusal"` for `content_filter`), which is Anthropic's contract for a truncated turn — the client discards the partial block instead of running it. Note the Codex backend rejects `max_output_tokens` outright (*"Unsupported parameter"*), so claudish cannot raise the cap; reporting the truncation honestly is the only available mitigation.
-- **`response.incomplete` always logged `reason: unknown`**: the reason was read from `event.reason`, but it lives at `event.response.incomplete_details.reason`.
-
-## [7.12.6] - 2026-07-16
+## [7.12.7] - 2026-07-15
 
 ### Bug Fixes
 
-- **`claudish update` failed with "check your internet connection" on a working connection**: the npm version check used a hard 5s timeout with no retry, and collapsed every failure into `null` — so the command blamed the network. Registry latency is spiky in practice (~150ms when warm, several seconds on a cold DNS/TLS handshake, occasionally past 5s), which made this fire intermittently while `curl` fetched the same URL in under a second. The interactive `update` command now uses a 15s timeout with 2 retries, falls back to `npm view claudish version` (which honours the user's registry/proxy/auth config that a bare `fetch()` ignores), and reports the **actual** reason on failure (timeout vs HTTP status vs network error) along with the manual command for the detected install method. The fire-and-forget startup notification keeps its 5s single-attempt behaviour so it never stalls launch.
+- v7.12.7 — a turn cut off by max_output_tokens is no longer reported as a completed tool call([`dc0bca4`](https://github.com/MadAppGang/claudish/commit/dc0bca46e6698406c6065377a20fffa41b32a116))
+
+### Documentation
+
+- update CHANGELOG.md for v7.12.6([`1745d3c`](https://github.com/MadAppGang/claudish/commit/1745d3c8a9072255d0c0c672aad7b0b680e0ae83))
+
+## [7.12.6] - 2026-07-15
+
+### Bug Fixes
+
+- v7.12.6 — claudish update no longer blames the network for its own timeout([`1c31fa9`](https://github.com/MadAppGang/claudish/commit/1c31fa9b3928388849e947e067753d5aa038c584))
+
+### Documentation
+
+- update CHANGELOG.md for v7.12.5([`8983215`](https://github.com/MadAppGang/claudish/commit/8983215fa6a70ebc1e59c0d0498648efc9659ff3))
 
 ## [7.12.5] - 2026-07-15
 
 ### Bug Fixes
 
-Three fixes to the gpt-5.6 family (OpenAI Responses API / Codex path), each with a real-data regression test.
+- v7.12.5 — OpenAI/Codex Responses parser: no duplicate tools, thinking blocks, tool_result images([`0d57fc7`](https://github.com/MadAppGang/claudish/commit/0d57fc7d59c02f69903647be1c884be87499f5f3))
 
-- **Duplicate tool calls (duplicate agents, questions asked twice)**: the Responses stream parser (`openai-responses-sse`) re-emitted a `content_block_stop` for the *first* tool block at end-of-stream — a stale `hasTextContent` flag plus a `functionCalls` map counted twice per call (both `call_id` and `item_id`). Claude Code then re-dispatched that first tool, so a turn asking for N parallel agents ran N+1 with the first duplicated, and `EnterPlanMode`/questions fired twice. Rewrote the block-index bookkeeping to mirror `openai-sse`: one monotonic index, exactly-once stops, contiguous indices.
-- **Reasoning shown as the answer, and section headers smashed together (`**A****B**`)**: `reasoning_summary_text` was mapped to a visible text block instead of a `thinking` block, and the structural paragraph break between summary parts (a new `summary_index`) was dropped, so section titles concatenated. Reasoning now emits a `thinking` block with the break restored between parts.
-- **Images in a `tool_result` blew the context window (`context_length_exceeded`)**: reading an image file (e.g. a screenshot) returns a `tool_result` whose image content was `JSON.stringify`'d into the tool output — a ~350KB base64 image became ~90k **text** tokens; a few of them exceeded the model's context. Images in a `tool_result` are now forwarded as `image_url` / `input_image` in a following user message (OpenAI's required pattern — tool/function messages cannot carry images), counted as bounded image tokens. Verified end-to-end against the Codex backend with gpt-5.6-sol.
-- Added a raw `[SSE:responses]` debug capture so the Responses path can be extracted into test fixtures like the other stream parsers.
+### Documentation
+
+- update CHANGELOG.md for v7.12.3([`4dde453`](https://github.com/MadAppGang/claudish/commit/4dde4537739e110150a59c6b6bdbffcd1ac51af7))
 
 ## [7.12.4] - 2026-07-14
 
 ### Bug Fixes
 
-- **`--verbose` now reaches the child `claude` in single-shot mode**: claudish consumed `--verbose`/`-v` as its own log-verbosity flag and never forwarded it, so it never reached `claude`. But Claude Code hard-errors on `--print --output-format stream-json` unless `--verbose` is also present — a machine consumer (e.g. madbench) that passes `--verbose` had its session die instantly with zero output. `--verbose` is now forwarded to `claude` in non-interactive/print mode (deduped against an explicit passthrough `--verbose`).
-- **stdout pollution in single-shot mode**: claudish printed its own banner (`[claudish] Model:`, `[claudish] Arguments:`) and lifecycle chatter (`Shutting down proxy server...`, `Done`, signal notices) to **stdout**. In single-shot/print mode stdout carries Claude Code's machine-readable output (e.g. stream-json parsed line-by-line), so this corrupted the stream. All claudish self-output now routes to **stderr** whenever the session is non-interactive; interactive mode is unchanged.
-- **First-run auto-approve prompt hung machine-driven single-shot runs**: the one-time "Enable auto-approve? [Y/n]" confirmation only skipped on `--stdin`. A consumer that pipes the prompt on stdin *without* claudish's `--stdin` flag (madbench uses `--input-format text`, a `claude` flag) hit the readline prompt, which stole the prompt from `claude`'s stdin and exited 1. The confirmation is now also skipped in single-shot/print mode (no human to answer). Auto-approve stays on, so `claude` still receives `--dangerously-skip-permissions`.
-- **Duplicate print flag**: single-shot mode no longer appends its own `-p` when the caller already passed `-p`/`--print` through (they are synonyms; the duplicate was harmless but produced a confusing arg line).
+- v7.12.4 — single-shot stream-json is machine-clean (verbose forwarding, stderr chatter, no first-run prompt)([`d620bca`](https://github.com/MadAppGang/claudish/commit/d620bca90aa5af68c89e9dc5d4353aae2977ba66))
 
 ## [7.12.3] - 2026-07-13
 
 ### Bug Fixes
 
-- v7.12.3 — route gpt-5.6 family via /v1/responses on oai@, native max effort, RequestMeta trace([`bcd4b3c`](https://github.com/MadAppGang/claudish/commit/bcd4b3cd9d7e971e5b913315e329fc72e61470a6))
+- v7.12.3 — route gpt-5.6 family via /v1/responses on oai@, native max effort, RequestMeta trace([`4679748`](https://github.com/MadAppGang/claudish/commit/4679748cfba493a5130bed8a1dd9cc583f645b9d))
+
+### Documentation
+
+- update CHANGELOG.md for v7.12.2([`5070f99`](https://github.com/MadAppGang/claudish/commit/5070f997725d9f4dca7ce89cfdf4c299fc0f2c5f))
 
 ## [7.12.2] - 2026-07-12
 
