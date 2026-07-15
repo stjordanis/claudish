@@ -2,6 +2,17 @@
 
 All notable changes to [Claudish](https://github.com/MadAppGang/claudish).
 
+## [7.12.5] - 2026-07-15
+
+### Bug Fixes
+
+Three fixes to the gpt-5.6 family (OpenAI Responses API / Codex path), each with a real-data regression test.
+
+- **Duplicate tool calls (duplicate agents, questions asked twice)**: the Responses stream parser (`openai-responses-sse`) re-emitted a `content_block_stop` for the *first* tool block at end-of-stream — a stale `hasTextContent` flag plus a `functionCalls` map counted twice per call (both `call_id` and `item_id`). Claude Code then re-dispatched that first tool, so a turn asking for N parallel agents ran N+1 with the first duplicated, and `EnterPlanMode`/questions fired twice. Rewrote the block-index bookkeeping to mirror `openai-sse`: one monotonic index, exactly-once stops, contiguous indices.
+- **Reasoning shown as the answer, and section headers smashed together (`**A****B**`)**: `reasoning_summary_text` was mapped to a visible text block instead of a `thinking` block, and the structural paragraph break between summary parts (a new `summary_index`) was dropped, so section titles concatenated. Reasoning now emits a `thinking` block with the break restored between parts.
+- **Images in a `tool_result` blew the context window (`context_length_exceeded`)**: reading an image file (e.g. a screenshot) returns a `tool_result` whose image content was `JSON.stringify`'d into the tool output — a ~350KB base64 image became ~90k **text** tokens; a few of them exceeded the model's context. Images in a `tool_result` are now forwarded as `image_url` / `input_image` in a following user message (OpenAI's required pattern — tool/function messages cannot carry images), counted as bounded image tokens. Verified end-to-end against the Codex backend with gpt-5.6-sol.
+- Added a raw `[SSE:responses]` debug capture so the Responses path can be extracted into test fixtures like the other stream parsers.
+
 ## [7.12.4] - 2026-07-14
 
 ### Bug Fixes
