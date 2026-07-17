@@ -2,6 +2,18 @@
 
 All notable changes to [Claudish](https://github.com/MadAppGang/claudish).
 
+## [7.15.0] - 2026-07-17
+
+### Features
+
+- **Persistent debug mode — enable `-d` globally without retyping it**: The claudish debug log (`logs/claudish_*.log`) previously required passing `-d` / `--debug-claudish` on every single run. You can now turn it on once, globally, two ways:
+  - **Env var**: `CLAUDISH_DEBUG=1` (or `true`) — same effect as `-d`.
+  - **Config file**: `"debug": true` in `~/.claudish/config.json`.
+
+  Precedence, highest to lowest: the `-d` / `--no-debug-claudish` flag → `CLAUDISH_DEBUG` env → `"debug"` in config.json → off. Like `-d`, enabling debug this way also bumps the log level to `debug` (an explicit `--log-level` still wins).
+
+- **`--no-debug-claudish`**: an escape hatch to force the debug file log off for a single run when it's been enabled globally (`CLAUDISH_DEBUG=1` or `"debug": true`). `CLAUDISH_DEBUG=0` / `false` does the same via the environment.
+
 ## [7.14.0] - 2026-07-16
 
 ### Features

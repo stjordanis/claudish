@@ -249,3 +249,67 @@ describe("Interactive mode detection with flag-only args", () => {
     expect(config.interactive).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Global / persistent debug mode (CLAUDISH_DEBUG env + --no-debug-claudish)
+// ---------------------------------------------------------------------------
+
+describe("Persistent debug mode", () => {
+  const KEY = "CLAUDISH_DEBUG";
+
+  async function withEnv(value: string | undefined, fn: () => Promise<void>) {
+    const prev = process.env[KEY];
+    if (value === undefined) delete process.env[KEY];
+    else process.env[KEY] = value;
+    try {
+      await fn();
+    } finally {
+      if (prev === undefined) delete process.env[KEY];
+      else process.env[KEY] = prev;
+    }
+  }
+
+  test("CLAUDISH_DEBUG=1 enables debug and bumps log level to debug", async () => {
+    await withEnv("1", async () => {
+      const config = await parseArgs(["--model", "grok"]);
+      expect(config.debug).toBe(true);
+      expect(config.logLevel).toBe("debug");
+    });
+  });
+
+  test("CLAUDISH_DEBUG=true enables debug", async () => {
+    await withEnv("true", async () => {
+      const config = await parseArgs(["--model", "grok"]);
+      expect(config.debug).toBe(true);
+    });
+  });
+
+  test("CLAUDISH_DEBUG=0 keeps debug off", async () => {
+    await withEnv("0", async () => {
+      const config = await parseArgs(["--model", "grok"]);
+      expect(config.debug).toBe(false);
+    });
+  });
+
+  test("--debug-claudish still works with CLAUDISH_DEBUG unset", async () => {
+    await withEnv(undefined, async () => {
+      const config = await parseArgs(["--model", "grok", "-d"]);
+      expect(config.debug).toBe(true);
+    });
+  });
+
+  test("--no-debug-claudish overrides CLAUDISH_DEBUG=1 for this run", async () => {
+    await withEnv("1", async () => {
+      const config = await parseArgs(["--model", "grok", "--no-debug-claudish"]);
+      expect(config.debug).toBe(false);
+    });
+  });
+
+  test("explicit --log-level wins over the debug auto-bump", async () => {
+    await withEnv("1", async () => {
+      const config = await parseArgs(["--model", "grok", "--log-level", "minimal"]);
+      expect(config.debug).toBe(true);
+      expect(config.logLevel).toBe("minimal");
+    });
+  });
+});

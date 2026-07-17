@@ -33,6 +33,7 @@ export const ENV = {
   // Local model optimizations
   CLAUDISH_SUMMARIZE_TOOLS: "CLAUDISH_SUMMARIZE_TOOLS", // Summarize tool descriptions to reduce prompt size
   CLAUDISH_DIAG_MODE: "CLAUDISH_DIAG_MODE", // Diagnostic output mode: auto (default), logfile, off
+  CLAUDISH_DEBUG: "CLAUDISH_DEBUG", // Always-on claudish debug logging (equivalent to -d / --debug-claudish)
 } as const;
 
 // OpenRouter API Configuration

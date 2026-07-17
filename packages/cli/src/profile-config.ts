@@ -152,6 +152,14 @@ export interface ClaudishProfileConfig {
   diagMode?: "auto" | "logfile" | "off";
 
   /**
+   * Always enable claudish's own debug logging (equivalent to passing
+   * `-d` / `--debug-claudish` on every run). Writes a full debug log to
+   * `logs/claudish_*.log` and bumps the log level to `debug`.
+   * Precedence: `-d` / `--no-debug-claudish` flag > CLAUDISH_DEBUG env > this field.
+   */
+  debug?: boolean;
+
+  /**
    * Default provider for bare model names. One of the builtin names
    * (openrouter, litellm, openai, anthropic, google) or a key from `customEndpoints`.
    * Precedence: --default-provider flag > CLAUDISH_DEFAULT_PROVIDER env > this field.
@@ -253,6 +261,9 @@ export function loadConfig(): ClaudishProfileConfig {
     }
     if (config.defaultProvider !== undefined) {
       merged.defaultProvider = config.defaultProvider;
+    }
+    if (config.debug !== undefined) {
+      merged.debug = config.debug;
     }
     if (config.customEndpoints !== undefined) {
       merged.customEndpoints = config.customEndpoints;

@@ -216,11 +216,15 @@ export async function parseArgs(args: string[]): Promise<ClaudishConfig> {
     config.summarizeTools = true;
   }
 
-  // Load diagMode from settings file (lowest priority — env/CLI override)
+  // Load diagMode + debug from settings file (lowest priority — env/CLI override)
   try {
     const fileConfig = loadConfig();
     if (fileConfig.diagMode && ["auto", "logfile", "off"].includes(fileConfig.diagMode)) {
       config.diagMode = fileConfig.diagMode;
+    }
+    // `"debug": true` in config.json makes every run behave like `-d`.
+    if (fileConfig.debug === true) {
+      config.debug = true;
     }
   } catch {}
 
@@ -228,6 +232,23 @@ export async function parseArgs(args: string[]): Promise<ClaudishConfig> {
   const envDiagMode = process.env[ENV.CLAUDISH_DIAG_MODE]?.toLowerCase();
   if (envDiagMode && ["auto", "logfile", "off"].includes(envDiagMode)) {
     config.diagMode = envDiagMode as typeof config.diagMode;
+  }
+
+  // CLAUDISH_DEBUG env var (overrides settings file, still below the CLI flag).
+  // Accepts 1/true to enable, 0/false to force-disable (so a globally-set
+  // config.debug can be turned off for a single run via the environment).
+  const envDebug = process.env[ENV.CLAUDISH_DEBUG]?.toLowerCase();
+  if (envDebug === "1" || envDebug === "true") {
+    config.debug = true;
+  } else if (envDebug === "0" || envDebug === "false") {
+    config.debug = false;
+  }
+
+  // If debug was enabled via config/env (not the CLI flag, which handles this
+  // inline), default the log level to `debug` too — the `-d` flag does the same.
+  // `--log-level` later in the arg loop still overrides this.
+  if (config.debug && config.logLevel === "info") {
+    config.logLevel = "debug";
   }
 
   // Parse command line arguments
@@ -282,6 +303,10 @@ export async function parseArgs(args: string[]): Promise<ClaudishConfig> {
       if (config.logLevel === "info") {
         config.logLevel = "debug";
       }
+    } else if (arg === "--no-debug-claudish") {
+      // Escape hatch when debug is globally enabled (config.json / CLAUDISH_DEBUG):
+      // turn the debug file log off for this single run.
+      config.debug = false;
     } else if (arg === "--log-debug") {
       // Renamed in v7.13.0. Fail loudly rather than forwarding an unknown flag
       // to `claude`, which would surface as a confusing error from the child.
@@ -1893,6 +1918,8 @@ ${h("OPTIONS")}
   ${green("--op-env")} ${yellow("<id>")}            Load env vars from a 1Password Environment (highest priority)
   ${green("--port")} ${yellow("<port>")}            Proxy server port (default: random)
   ${green("-d, --debug-claudish")}     Enable claudish debug logging to file (logs/claudish_*.log)
+                           ${dim('Always-on: CLAUDISH_DEBUG=1 env var or "debug": true in config.json')}
+  ${green("--no-debug-claudish")}      Force debug logging off for this run (when globally enabled)
   ${green("--log-off")}                Disable always-on structural logging (~/.claudish/logs/)
   ${green("--log-diag")} ${yellow("<mode>")}        Diagnostic output: auto (default), logfile, off
                            ${dim('Also: CLAUDISH_DIAG_MODE env var or "diagMode" in config.json')}
@@ -2056,6 +2083,7 @@ ${h("ENVIRONMENT VARIABLES")}
   ${blue("CLAUDISH_PORT")}                   Default proxy port
   ${blue("CLAUDISH_CONTEXT_WINDOW")}         Override context window size
   ${blue("CLAUDISH_DIAG_MODE")}              Diagnostic output: auto / logfile / off
+  ${blue("CLAUDISH_DEBUG")}                  Always enable debug logging: 1 / true ${dim("(same as -d)")}
   ${blue("CLAUDISH_MCP_TOOLS")}              MCP tool gating: all / low-level / agentic / channel
   ${blue("CLAUDISH_MODEL_OPUS")}             Override model for Opus role
   ${blue("CLAUDISH_MODEL_SONNET")}           Override model for Sonnet role
